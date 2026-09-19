@@ -1,3 +1,4 @@
+import ast
 from datetime import UTC, datetime, timedelta
 
 import sys
@@ -69,3 +70,34 @@ def test_right_settings_exposes_graph_rag_controls() -> None:
     assert 'Evidencia recuperada' in app_source
     assert 'Progreso de consulta' in app_source
     assert 'Limpiar conversación' in app_source
+
+def test_service_status_is_rendered_in_left_navigation() -> None:
+    frontend = Path(__file__).resolve().parents[1] / "frontend"
+    app_source = (frontend / "app.py").read_text(encoding="utf-8")
+
+    assert 'def render_left_navigation(service_ready: bool)' in app_source
+    assert "left-status-card" in app_source
+    assert 'status_text = "API y Neo4j disponibles" if service_ready' in app_source
+
+    right_start = app_source.index("def render_right_settings()")
+    right_end = app_source.index("def render_topbar", right_start)
+    right_source = app_source[right_start:right_end]
+    assert 'st.markdown("**Estado**")' not in right_source
+
+
+def test_initial_view_resets_scroll_to_top() -> None:
+    frontend = Path(__file__).resolve().parents[1] / "frontend"
+    app_source = (frontend / "app.py").read_text(encoding="utf-8")
+
+    assert '"scroll_to_top": True' in app_source
+    assert "def reset_scroll_to_top_if_requested()" in app_source
+    assert "section[data-testid=\"stMain\"]" in app_source
+    assert "element.scrollTop = 0" in app_source
+    assert "reset_scroll_to_top_if_requested()" in app_source
+
+
+
+def test_frontend_app_source_is_valid_python() -> None:
+    frontend = Path(__file__).resolve().parents[1] / "frontend"
+    app_source = (frontend / "app.py").read_text(encoding="utf-8")
+    ast.parse(app_source)

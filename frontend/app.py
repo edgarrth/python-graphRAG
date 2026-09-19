@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import httpx
 import streamlit as st
+import streamlit.components.v1 as components
 from api_client import ApiClient
 from ui_helpers import EXAMPLE_QUESTIONS, conversation_group, conversation_title, trace_rows
 
@@ -39,6 +40,7 @@ for key, default in {
     "show_evidence": True,
     "top_k": 4,
     "left_sidebar_collapsed": False,
+    "scroll_to_top": True,
 }.items():
     st.session_state.setdefault(key, default)
 
@@ -196,6 +198,44 @@ a {{ color:var(--axiz-accent); }}
 }}
 .st-key-left_nav_panel hr,
 .st-key-right_settings_panel hr {{ border-color:var(--axiz-line); }}
+
+.left-status-card {{
+  display:flex;
+  align-items:center;
+  gap:.55rem;
+  margin:.15rem 0 .45rem;
+  padding:.62rem .68rem;
+  border:1px solid #214254;
+  border-radius:11px;
+  background:#0b1a24;
+  color:#bfd0da;
+  font-size:.73rem;
+  line-height:1.35;
+}}
+.left-status-card.ready {{
+  border-color:#1f5b48;
+  background:#0c211d;
+}}
+.left-status-card.offline {{
+  border-color:#60443a;
+  background:#211714;
+}}
+.left-status-indicator {{
+  width:8px;
+  height:8px;
+  flex:0 0 8px;
+  border-radius:50%;
+  background:#748797;
+}}
+.left-status-card.ready .left-status-indicator {{
+  background:var(--axiz-success);
+  box-shadow:0 0 8px rgba(75,216,160,.42);
+}}
+.left-status-card.offline .left-status-indicator {{
+  background:#f0a071;
+}}
+.left-tech-row {{ margin:0 0 .58rem; }}
+.left-tech-row .tech-pill {{ font-size:.61rem; padding:.16rem .38rem; }}
 
 /* A compact ChatGPT-like reopen affordance that belongs to the content area,
    not to a permanent empty rail. */
@@ -480,6 +520,42 @@ a {{ color:var(--axiz-accent); }}
 )
 
 
+def reset_scroll_to_top_if_requested() -> None:
+    """Reset the main Streamlit scroll container after initial/new-chat render."""
+    if not st.session_state.get("scroll_to_top", False):
+        return
+
+    components.html(
+        """
+        <script>
+        (() => {
+          const reset = () => {
+            const doc = window.parent.document;
+            const candidates = [
+              doc.querySelector('section[data-testid="stMain"]'),
+              doc.querySelector('[data-testid="stAppViewContainer"]'),
+              doc.scrollingElement
+            ];
+            for (const element of candidates) {
+              if (!element) continue;
+              element.scrollTop = 0;
+              if (typeof element.scrollTo === 'function') {
+                element.scrollTo({top: 0, left: 0, behavior: 'instant'});
+              }
+            }
+            try { window.parent.scrollTo({top: 0, left: 0, behavior: 'instant'}); } catch (_) {}
+          };
+          requestAnimationFrame(reset);
+          setTimeout(reset, 60);
+          setTimeout(reset, 220);
+        })();
+        </script>
+        """,
+        height=0,
+    )
+    st.session_state.scroll_to_top = False
+
+
 def new_conversation() -> str:
     conversation_id = str(uuid4())
     now = datetime.now(UTC)
@@ -491,6 +567,7 @@ def new_conversation() -> str:
         "messages": [],
     }
     st.session_state.current_conversation_id = conversation_id
+    st.session_state.scroll_to_top = True
     return conversation_id
 
 
@@ -538,7 +615,7 @@ def render_brand_header() -> None:
     )
 
 
-def render_left_navigation() -> None:
+def render_left_navigation(service_ready: bool) -> None:
     with st.container(key="left_nav_panel"):
         head_left, head_right = st.columns([0.78, 0.22], vertical_alignment="center")
         with head_left:
@@ -549,6 +626,23 @@ def render_left_navigation() -> None:
                 st.rerun()
 
         render_brand_header()
+
+        status_class = "ready" if service_ready else "offline"
+        status_text = "API y Neo4j disponibles" if service_ready else "API / Neo4j no disponible"
+        st.markdown(
+            f"<div class='left-status-card {status_class}'>"
+            "<span class='left-status-indicator'></span>"
+            f"<span>{status_text}</span></div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            "<div class='left-tech-row'>"
+            "<span class='tech-pill'>Vector</span>"
+            "<span class='tech-pill'>Full-text</span>"
+            "<span class='tech-pill'>Graph</span>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
         if st.button("＋ Nuevo chat", type="primary", width="stretch"):
             new_conversation()
@@ -626,7 +720,7 @@ def render_left_navigation() -> None:
                 )
 
 
-def render_right_settings(service_ready: bool) -> None:
+def render_right_settings() -> None:
     with st.container(key="right_settings_panel"):
         st.markdown("<div class='panel-title'>Configuración</div>", unsafe_allow_html=True)
         st.markdown(
@@ -656,20 +750,6 @@ def render_right_settings(service_ready: bool) -> None:
             "Progreso de consulta",
             value=bool(st.session_state.show_query_progress),
             help="Muestra las etapas visibles de recuperación mientras se procesa la pregunta.",
-        )
-
-        st.divider()
-        st.markdown("**Estado**")
-        if service_ready:
-            st.success("API y Neo4j disponibles", icon="✅")
-        else:
-            st.warning("API / Neo4j no disponible", icon="⚠️")
-
-        st.markdown(
-            "<span class='tech-pill'>Vector search</span>"
-            "<span class='tech-pill'>Full-text</span>"
-            "<span class='tech-pill'>Graph expansion</span>",
-            unsafe_allow_html=True,
         )
 
         st.divider()
@@ -827,11 +907,11 @@ if st.session_state.left_sidebar_collapsed:
         else:
             render_empty_state()
     with right_col:
-        render_right_settings(service_ready)
+        render_right_settings()
 else:
     left_col, center_col, right_col = st.columns([0.29, 0.94, 0.29], gap="large")
     with left_col:
-        render_left_navigation()
+        render_left_navigation(service_ready)
     with center_col:
         render_topbar(conversation, service_ready)
         messages = conversation["messages"]
@@ -841,10 +921,11 @@ else:
         else:
             render_empty_state()
     with right_col:
-        render_right_settings(service_ready)
+        render_right_settings()
 
 pending = st.session_state.pop("pending_question", None)
 question = st.chat_input("Pregunta sobre rechazos, incidencias o controles de payment processing")
+reset_scroll_to_top_if_requested()
 question = question or pending
 
 if question:
