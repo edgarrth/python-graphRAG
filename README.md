@@ -1,6 +1,6 @@
 # Axiz GraphRAG Payments PoC
 
-Versión de la PoC: **1.5.0**.
+Versión de la PoC: **1.5.4**.
 
 PoC técnica en Python para demostrar una arquitectura **GraphRAG (Graph Retrieval-Augmented Generation)** sobre un caso funcional de **payment processing**: investigación de rechazos, timeouts y controles operativos de pagos.
 
@@ -259,7 +259,7 @@ docker compose -f infrastructure/docker-compose.yml up --build
 
 La construcción está optimizada para evitar duplicar trabajo pesado:
 
-- `api` y `dataset-loader` usan **la misma imagen backend** (`axiz-graphrag-payments-poc-app:1.5.0`) construida desde `infrastructure/app.Dockerfile`;
+- `api` y `dataset-loader` usan **la misma imagen backend** (`axiz-graphrag-payments-poc-app:1.5.4`) construida desde `infrastructure/app.Dockerfile`;
 - PyTorch se instala desde el índice oficial **CPU-only**, porque esta PoC no requiere CUDA/GPU;
 - las dependencias se instalan antes de copiar el código de aplicación, por lo que cambios normales en `src/` reutilizan las capas pesadas del build;
 - el modelo de embeddings se almacena en un volumen `hf_cache` compartido entre `dataset-loader` y `api`, evitando descargarlo dos veces;
@@ -267,13 +267,14 @@ La construcción está optimizada para evitar duplicar trabajo pesado:
 - la interfaz adopta la construcción visual del proyecto de referencia suministrado: tema oscuro Axiz, logo e ícono empaquetados y superficie conversacional central inspirada en ChatGPT;
 - el **sidebar izquierdo es propio de la aplicación**, conserva nuevo chat, búsqueda, historial agrupado, selección, renombrado y eliminación de conversaciones y puede colapsarse como en ChatGPT; al ocultarlo desaparece realmente y el chat central gana un ancho moderado; también muestra el estado de API/Neo4j y las capacidades de recuperación activas;
 - el **sidebar derecho** queda reservado para configuración de la PoC: `Top K`, actividad técnica, evidencia recuperada, progreso de consulta y limpieza de la conversación actual;
-- el documento principal se mantiene **sin scroll en desktop**: los sidecards izquierdo/derecho quedan anclados al viewport y solo el historial central de chat tiene scroll;
-- el chat central usa un contenedor nativo con `autoscroll=True` y una clave de viewport que se renueva al enviar/completar un turno, reactivando el seguimiento al último mensaje incluso después de un scroll manual previo;
+- el documento principal se mantiene **sin scroll en desktop**: los sidecards izquierdo/derecho quedan anclados al viewport y solo el historial central de chat tiene scroll; el scroll usa comportamiento nativo (`scroll-behavior: auto`) para evitar sensación de lentitud en mouse/trackpad;
+- el historial central usa un **`st.container` nativo de altura fija (500 px)** como única superficie de scroll; la PoC no sobrescribe el `overflow` interno de Streamlit, evitando recortes de respuestas largas y garantizando scroll manual con rueda/trackpad; `autoscroll` se activa únicamente durante SSE y queda desactivado en el render estable posterior;
 - `st.chat_input` se renderiza **inline dentro de la columna central**, evitando el footer global de Streamlit que antes podía desplazar o recortar los paneles laterales;
-- el frontend consume `/api/v1/graphrag/query/stream` y va pintando los deltas SSE mientras el API recupera contexto y genera la respuesta;
+- al comenzar el primer turno, la superficie de bienvenida se oculta inmediatamente mediante un marcador de streaming; esto evita que “¿Qué quieres investigar sobre tus pagos?” permanezca visible debajo de los primeros deltas mientras Streamlit termina de podar el DOM del render anterior;
+- el frontend consume `/api/v1/graphrag/query/stream` y pinta la respuesta progresivamente; los deltas SSE pequeños se agrupan en lotes cortos antes de renderizarse para reducir repaints y mantener fluido el scroll sin perder la sensación de streaming;
 - el chat mantiene un ancho de lectura contenido (aprox. 940 px con navegación abierta y 1040 px cuando se colapsa), evitando estirar las respuestas por toda la pantalla;
 - el panel izquierdo muestra el **proveedor de generación realmente reportado por `api-1`** (`OpenAI · modelo` o `Deterministic`), evitando confundir la configuración de un contenedor temporal con la del API activo;
-- se mantienen las cuatro preguntas sugeridas en el estado inicial y el input inferior fijo;
+- se mantienen las cuatro preguntas sugeridas en el estado inicial, con separación propia para evitar solapamientos visuales, y el input inferior fijo;
 - el historial de UI permanece deliberadamente en `st.session_state`: no se agrega una base de datos solo para conversaciones porque no es necesaria para demostrar GraphRAG.
 
 En el primer `--build` todavía se descargarán Python, PyTorch CPU, GraphRAG y Sentence Transformers, por lo que puede tardar varios minutos según la conexión. En rebuilds posteriores, Docker reutiliza las capas si `pyproject.toml` no cambió.

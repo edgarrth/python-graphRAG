@@ -99,19 +99,54 @@ def test_service_status_and_generation_provider_are_rendered_left() -> None:
     assert 'readiness.get("generation_provider"' in app_source
 
 
-def test_chat_has_isolated_scroll_surface_and_rearmed_autoscroll() -> None:
+def test_chat_uses_native_streamlit_scroll_and_turn_autoscroll() -> None:
     frontend = Path(__file__).resolve().parents[1] / "frontend"
     app_source = (frontend / "app.py").read_text(encoding="utf-8")
 
     assert "chat_scroll_panel_{conversation['id']}_{int(st.session_state.scroll_epoch)}" in app_source
-    assert "height=560" in app_source
-    assert "autoscroll=True" in app_source
+    assert "CHAT_VIEWPORT_HEIGHT = 500" in app_source
+    assert "height=CHAT_VIEWPORT_HEIGHT" in app_source
+    assert "follow_stream = bool(pending_request)" in app_source
+    assert "autoscroll=follow_stream" in app_source
     assert 'div[class*="st-key-chat_scroll_panel_"]' in app_source
-    assert "request_scroll_to_latest()" in app_source
+    # Do not override Streamlit's internal scroll wrapper. The native fixed-height
+    # container must own overflow so long answers and manual wheel scrolling work.
+    assert '[data-testid="stVerticalBlockBorderWrapper"]::-webkit-scrollbar' not in app_source
+    assert 'overflow-y:auto !important;' not in app_source.split('/* The message history is a native Streamlit fixed-height container.', 1)[1].split('/* Streamlit keeps stale elements', 1)[0]
+    assert 'scroll-behavior:smooth' not in app_source
     assert 'key="chat_composer"' in app_source
-    assert "overflow:hidden !important" in app_source
     assert "components.v1" not in app_source
     assert "components.html" not in app_source
+
+    # Autoscroll is active only for the live request. The stable render after
+    # completion has pending_request=None, so manual history scrolling remains
+    # under user control instead of being pulled back to the bottom.
+    submit_block = app_source.split("if submitted_question", 1)[1]
+    assert "request_scroll_to_latest()" in submit_block
+    success_block = app_source.split('add_message("assistant", answer.strip(), payload)', 1)[1].split("except", 1)[0]
+    assert "request_scroll_to_latest()" not in success_block
+
+
+def test_first_stream_hides_stale_empty_state_immediately() -> None:
+    frontend = Path(__file__).resolve().parents[1] / "frontend"
+    app_source = (frontend / "app.py").read_text(encoding="utf-8")
+
+    assert 'key="empty_state"' in app_source
+    assert 'class="stream-active-marker"' in app_source
+    assert '.st-key-center_shell:has(.stream-active-marker) .st-key-empty_state' in app_source
+    # The welcome state is rendered only when there are no messages and no
+    # pending request; once streaming starts, the marker also hides any stale
+    # DOM from the previous Streamlit run until it is pruned.
+    assert "elif not pending_request:" in app_source
+
+
+def test_example_questions_have_dedicated_spacing_container() -> None:
+    frontend = Path(__file__).resolve().parents[1] / "frontend"
+    app_source = (frontend / "app.py").read_text(encoding="utf-8")
+
+    assert 'key="example_questions"' in app_source
+    assert ".st-key-example_questions" in app_source
+    assert "line-height:1.25" in app_source
 
 
 def test_frontend_uses_sse_stream_endpoint() -> None:
@@ -129,3 +164,26 @@ def test_frontend_app_source_is_valid_python() -> None:
     frontend = Path(__file__).resolve().parents[1] / "frontend"
     app_source = (frontend / "app.py").read_text(encoding="utf-8")
     ast.parse(app_source)
+
+
+
+def test_sse_rendering_batches_small_deltas_for_ui_performance() -> None:
+    frontend = Path(__file__).resolve().parents[1] / "frontend"
+    app_source = (frontend / "app.py").read_text(encoding="utf-8")
+
+    assert "STREAM_RENDER_BATCH_CHARS = 64" in app_source
+    assert "pending_parts: list[str] = []" in app_source
+    assert "pending_chars >= STREAM_RENDER_BATCH_CHARS" in app_source
+    assert 'yield "".join(pending_parts)' in app_source
+
+def test_chat_composer_is_pinned_inside_center_shell() -> None:
+    frontend = Path(__file__).resolve().parents[1] / "frontend"
+    app_source = (frontend / "app.py").read_text(encoding="utf-8")
+
+    assert 'key="center_shell"' in app_source
+    assert '.st-key-center_shell {' in app_source
+    assert 'position:relative !important;' in app_source
+    assert 'div[data-testid="stElementContainer"]:has(.st-key-chat_composer)' in app_source
+    assert 'position:absolute !important;' in app_source
+    assert 'bottom:0 !important;' in app_source
+    assert 'padding-bottom:5.65rem !important;' in app_source

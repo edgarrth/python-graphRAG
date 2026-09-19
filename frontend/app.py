@@ -47,6 +47,8 @@ for key, default in {
 
 LEFT_COLLAPSED = bool(st.session_state.left_sidebar_collapsed)
 CHAT_MAX_WIDTH = 1040 if LEFT_COLLAPSED else 940
+STREAM_RENDER_BATCH_CHARS = 64
+CHAT_VIEWPORT_HEIGHT = 500
 
 st.html(
     f"""
@@ -138,31 +140,55 @@ a {{ color:var(--axiz-accent); }}
   border-radius:999px;
 }}
 
-/* The chat is the only primary scrolling surface. Its key changes whenever a
-   new turn is submitted/completed so Streamlit re-engages autoscroll even if
-   the user had manually moved upward during the previous turn. */
+/* The center shell owns the complete conversational viewport. Header, chat
+   scroller and composer are laid out as a vertical flex column, so the input
+   can never be pushed below the viewport after the first rerun. */
+.st-key-center_shell {{
+  height:calc(100dvh - 1.44rem) !important;
+  max-height:calc(100dvh - 1.44rem) !important;
+  min-height:0 !important;
+  overflow:hidden !important;
+  position:relative !important;
+  padding-bottom:5.65rem !important;
+  box-sizing:border-box !important;
+}}
+.st-key-center_shell > div[data-testid="stVerticalBlock"],
+.st-key-center_shell > div > div[data-testid="stVerticalBlock"] {{
+  height:100% !important;
+  min-height:0 !important;
+  display:flex !important;
+  flex-direction:column !important;
+  gap:0 !important;
+  overflow:hidden !important;
+}}
+
+/* The message history is a native Streamlit fixed-height container.
+   Do not override its internal overflow/wrapper nodes: Streamlit owns the
+   scrollbar and autoscroll semantics. Earlier versions styled the internal
+   stVerticalBlockBorderWrapper and could clip long answers or swallow wheel
+   events. We only constrain the outer width here. */
+.st-key-center_shell div[data-testid="stElementContainer"]:has(div[class*="st-key-chat_scroll_panel_"]) {{
+  flex:0 0 auto !important;
+  min-height:0 !important;
+  overflow:visible !important;
+}}
 div[class*="st-key-chat_scroll_panel_"] {{
   width:100%;
   max-width:{CHAT_MAX_WIDTH}px;
-  height:clamp(360px, calc(100dvh - 13.25rem), 720px) !important;
-  max-height:clamp(360px, calc(100dvh - 13.25rem), 720px) !important;
-  min-height:360px !important;
+  min-height:0 !important;
   margin-inline:auto;
-  overflow-y:auto !important;
-  overscroll-behavior:contain;
-  scrollbar-gutter:stable;
-  scroll-behavior:smooth;
-  padding:.08rem .34rem .5rem .04rem;
+  padding:0 !important;
   border:0 !important;
   background:transparent !important;
   box-sizing:border-box;
 }}
-div[class*="st-key-chat_scroll_panel_"]::-webkit-scrollbar {{ width:8px; }}
-div[class*="st-key-chat_scroll_panel_"]::-webkit-scrollbar-thumb {{
-  background:#1c3547;
-  border-radius:999px;
+
+/* Streamlit keeps stale elements from the previous run until the current run
+   advances far enough. Hide the previous empty-state immediately when a real
+   response starts so the welcome screen never remains underneath streaming. */
+.st-key-center_shell:has(.stream-active-marker) .st-key-empty_state {{
+  display:none !important;
 }}
-div[class*="st-key-chat_scroll_panel_"]::-webkit-scrollbar-track {{ background:transparent; }}
 
 .panel-header {{ display:flex; align-items:center; justify-content:space-between; gap:.5rem; margin:.05rem 0 .55rem; }}
 .panel-title {{ color:#dce8f0; font-size:.76rem; font-weight:760; letter-spacing:.055em; text-transform:uppercase; }}
@@ -202,7 +228,9 @@ div[class*="st-key-chat_scroll_panel_"]::-webkit-scrollbar-track {{ background:t
 .hero-spacer {{ height:2.5vh; }}
 .hero-title {{ color:#edf5fa; font-size:1.72rem; font-weight:780; letter-spacing:-.035em; margin:.62rem 0 .32rem; }}
 .hero-subtitle {{ color:#7890a3; font-size:.92rem; line-height:1.55; max-width:650px; margin:0 auto; }}
-.suggestion-label {{ color:#667f92; font-size:.7rem; font-weight:750; letter-spacing:.06em; margin:1.25rem 0 .42rem; text-transform:uppercase; }}
+.suggestion-label {{ display:block; position:relative; z-index:2; color:#667f92; font-size:.7rem; font-weight:750; line-height:1.25; letter-spacing:.06em; margin:1.05rem 0 .35rem; padding:0 0 .28rem; text-transform:uppercase; }}
+.st-key-example_questions {{ position:relative; z-index:1; margin-top:.12rem; padding-top:.18rem; }}
+.st-key-example_questions [data-testid="stButton"] {{ margin-top:.08rem; }}
 
 [data-testid="stChatMessage"] {{ width:100%; max-width:{CHAT_MAX_WIDTH}px; margin-inline:auto; background:transparent; border:0; padding:.33rem .08rem .85rem; }}
 [data-testid="stChatMessage"] [data-testid="stChatMessageContent"] {{ background:var(--axiz-card); border:1px solid var(--axiz-line); border-radius:13px; padding:.95rem 1.05rem; box-shadow:0 14px 34px rgba(0,0,0,.14); }}
@@ -226,7 +254,25 @@ div[class*="st-key-chat_scroll_panel_"]::-webkit-scrollbar-track {{ background:t
 
 /* Inline composer: unlike a root-level st.chat_input, it does not create a
    second page-level fixed layer and therefore cannot push/scroll the sidecards. */
-.st-key-chat_composer {{ width:100%; max-width:{CHAT_MAX_WIDTH}px; margin:.48rem auto 0; }}
+.st-key-center_shell div[data-testid="stElementContainer"]:has(.st-key-chat_composer) {{
+  position:absolute !important;
+  left:0 !important;
+  right:0 !important;
+  bottom:0 !important;
+  z-index:500 !important;
+  margin:0 !important;
+  padding:.38rem 0 .08rem !important;
+  background:linear-gradient(180deg,rgba(8,16,24,0) 0%,rgba(8,16,24,.94) 22%,var(--axiz-bg) 48%);
+  pointer-events:none;
+}}
+.st-key-chat_composer {{
+  width:100%;
+  max-width:{CHAT_MAX_WIDTH}px;
+  margin:0 auto;
+  position:relative !important;
+  z-index:501 !important;
+  pointer-events:auto;
+}}
 .st-key-chat_composer [data-testid="stChatInput"] {{ background:var(--axiz-card) !important; border:1px solid var(--axiz-line-strong) !important; border-radius:16px !important; box-shadow:0 12px 30px rgba(0,0,0,.26) !important; padding:.28rem .38rem .28rem .82rem; }}
 .st-key-chat_composer [data-testid="stChatInput"]:focus-within {{ border-color:#3a9cbc !important; box-shadow:0 0 0 1px rgba(67,195,236,.24),0 14px 32px rgba(0,0,0,.3) !important; }}
 .st-key-chat_composer [data-testid="stChatInput"] > div,
@@ -241,7 +287,12 @@ div[class*="st-key-chat_scroll_panel_"]::-webkit-scrollbar-track {{ background:t
   html, body, .stApp,[data-testid="stAppViewContainer"],[data-testid="stMain"] {{ height:auto !important; max-height:none !important; overflow:auto !important; }}
   [data-testid="stMainBlockContainer"],.block-container {{ height:auto !important; max-height:none !important; overflow:visible !important; }}
   .st-key-left_nav_panel,.st-key-right_settings_panel {{ height:auto !important; max-height:none !important; overflow:visible !important; }}
-  div[class*="st-key-chat_scroll_panel_"] {{ height:540px !important; max-height:540px !important; }}
+  .st-key-center_shell {{ height:auto !important; max-height:none !important; overflow:visible !important; }}
+  .st-key-center_shell > div[data-testid="stVerticalBlock"],
+  .st-key-center_shell > div > div[data-testid="stVerticalBlock"] {{ height:auto !important; display:block !important; overflow:visible !important; }}
+  .st-key-center_shell div[data-testid="stElementContainer"]:has(div[class*="st-key-chat_scroll_panel_"]) {{ overflow:visible !important; }}
+  .st-key-center_shell {{ padding-bottom:0 !important; }}
+  .st-key-center_shell div[data-testid="stElementContainer"]:has(.st-key-chat_composer) {{ position:static !important; padding:.4rem 0 0 !important; background:transparent !important; }}
 }}
 </style>
     """
@@ -574,33 +625,41 @@ def render_message(message: dict[str, Any]) -> None:
 
 
 def render_empty_state() -> None:
-    st.markdown("<div class='hero-spacer'></div>", unsafe_allow_html=True)
-    left, center, right = st.columns([3, 1, 3])
-    del left, right
-    with center:
-        st.image(APP_ICON, width=70)
-    st.markdown(
-        """
-        <div class="hero-title" style="text-align:center">¿Qué quieres investigar sobre tus pagos?</div>
-        <div class="hero-subtitle" style="text-align:center">
-          Consulta rechazos, incidencias y controles. La PoC combina recuperación semántica,
-          búsqueda full-text y expansión del grafo para aportar contexto conectado a la respuesta.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.markdown("<div class='suggestion-label'>Preguntas de ejemplo</div>", unsafe_allow_html=True)
-    left_column, right_column = st.columns(2, gap="small")
-    for index, question in enumerate(EXAMPLE_QUESTIONS):
-        column = left_column if index % 2 == 0 else right_column
-        with column:
-            if st.button(question, key=f"example-{index}", width="stretch"):
-                st.session_state.pending_question = question
+    # Keep the whole welcome surface under one keyed wrapper. During the first
+    # streaming run CSS can hide this exact wrapper immediately, avoiding the
+    # stale welcome screen that Streamlit may otherwise keep until the run ends.
+    with st.container(key="empty_state"):
+        st.markdown("<div class='hero-spacer'></div>", unsafe_allow_html=True)
+        left, center, right = st.columns([3, 1, 3])
+        del left, right
+        with center:
+            st.image(APP_ICON, width=70)
+        st.markdown(
+            """
+            <div class="hero-title" style="text-align:center">¿Qué quieres investigar sobre tus pagos?</div>
+            <div class="hero-subtitle" style="text-align:center">
+              Consulta rechazos, incidencias y controles. La PoC combina recuperación semántica,
+              búsqueda full-text y expansión del grafo para aportar contexto conectado a la respuesta.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.markdown("<div class='suggestion-label'>Preguntas de ejemplo</div>", unsafe_allow_html=True)
+        with st.container(key="example_questions"):
+            left_column, right_column = st.columns(2, gap="small")
+            for index, question in enumerate(EXAMPLE_QUESTIONS):
+                column = left_column if index % 2 == 0 else right_column
+                with column:
+                    if st.button(question, key=f"example-{index}", width="stretch"):
+                        st.session_state.pending_question = question
 
 
 
 def render_streaming_assistant(client: ApiClient, question: str) -> None:
     """Render one pending GraphRAG request using the API SSE stream."""
+    # This marker immediately suppresses any stale empty-state DOM left from
+    # the previous render while the long-lived SSE run is still in progress.
+    st.html('<div class="stream-active-marker" aria-hidden="true"></div>')
     with st.chat_message("assistant", avatar=APP_ICON):
         progress = None
         stream_state: dict[str, Any] = {"payload": None}
@@ -609,6 +668,9 @@ def render_streaming_assistant(client: ApiClient, question: str) -> None:
             progress = st.status("Recuperando contexto GraphRAG…", expanded=False)
 
         def text_deltas():
+            pending_parts: list[str] = []
+            pending_chars = 0
+
             for message in client.query_stream(question, int(st.session_state.top_k)):
                 event = message.get("event")
                 data = message.get("data") or {}
@@ -622,9 +684,19 @@ def render_streaming_assistant(client: ApiClient, question: str) -> None:
                         progress.write(f"Retrieval híbrido + expansión del grafo: {retrieval_ms} ms")
                 elif event == "delta":
                     delta = str(data.get("delta", ""))
-                    if delta:
-                        yield delta
+                    if not delta:
+                        continue
+                    pending_parts.append(delta)
+                    pending_chars += len(delta)
+                    if pending_chars >= STREAM_RENDER_BATCH_CHARS or "\n" in delta:
+                        yield "".join(pending_parts)
+                        pending_parts.clear()
+                        pending_chars = 0
                 elif event == "complete":
+                    if pending_parts:
+                        yield "".join(pending_parts)
+                        pending_parts.clear()
+                        pending_chars = 0
                     stream_state["payload"] = data
                     if progress is not None:
                         timings = data.get("timings") or {}
@@ -638,6 +710,9 @@ def render_streaming_assistant(client: ApiClient, question: str) -> None:
                     raise RuntimeError(
                         str(data.get("detail") or data.get("message") or "SSE error")
                     )
+
+            if pending_parts:
+                yield "".join(pending_parts)
 
         try:
             answer = st.write_stream(text_deltas(), cursor="▌")
@@ -654,7 +729,6 @@ def render_streaming_assistant(client: ApiClient, question: str) -> None:
                 }
             render_assistant_payload(payload)
             add_message("assistant", answer.strip(), payload)
-            request_scroll_to_latest()
         except (httpx.HTTPError, RuntimeError, ValueError) as exc:
             error_message = (
                 "No fue posible completar la consulta GraphRAG por streaming. "
@@ -665,7 +739,6 @@ def render_streaming_assistant(client: ApiClient, question: str) -> None:
             st.error(error_message)
             st.caption(str(exc))
             add_message("assistant", error_message)
-            request_scroll_to_latest()
         finally:
             st.session_state.pending_request = None
 
@@ -680,17 +753,21 @@ def render_chat_area(
 ) -> str | None:
     render_topbar(conversation, service_ready, readiness)
 
+    pending_request = st.session_state.get("pending_request")
     scroll_key = (
         f"chat_scroll_panel_{conversation['id']}_{int(st.session_state.scroll_epoch)}"
     )
+    # Follow new content only while a request is actively streaming. On the
+    # stable post-response rerun autoscroll is disabled, which returns full
+    # wheel/trackpad control to the user for browsing older messages.
+    follow_stream = bool(pending_request)
     with st.container(
-        height=560,
+        height=CHAT_VIEWPORT_HEIGHT,
         border=False,
         key=scroll_key,
-        autoscroll=True,
+        autoscroll=follow_stream,
     ):
         messages = conversation["messages"]
-        pending_request = st.session_state.get("pending_request")
         if messages:
             for message in messages:
                 render_message(message)
@@ -732,13 +809,14 @@ if st.session_state.left_sidebar_collapsed:
     with right_col:
         render_right_settings()
     with center_col:
-        with st.container(key="left_reopen_row"):
-            if st.button("☰", key="open-left", help="Mostrar historial"):
-                st.session_state.left_sidebar_collapsed = False
-                st.rerun()
-        submitted_question = render_chat_area(
-            client, conversation, service_ready, readiness_payload
-        )
+        with st.container(key="center_shell"):
+            with st.container(key="left_reopen_row"):
+                if st.button("☰", key="open-left", help="Mostrar historial"):
+                    st.session_state.left_sidebar_collapsed = False
+                    st.rerun()
+            submitted_question = render_chat_area(
+                client, conversation, service_ready, readiness_payload
+            )
 else:
     left_col, center_col, right_col = st.columns([0.29, 0.94, 0.29], gap="large")
     with left_col:
@@ -746,9 +824,10 @@ else:
     with right_col:
         render_right_settings()
     with center_col:
-        submitted_question = render_chat_area(
-            client, conversation, service_ready, readiness_payload
-        )
+        with st.container(key="center_shell"):
+            submitted_question = render_chat_area(
+                client, conversation, service_ready, readiness_payload
+            )
 
 if submitted_question and not st.session_state.get("pending_request"):
     add_message("user", submitted_question)
