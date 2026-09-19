@@ -1,6 +1,6 @@
 # Axiz GraphRAG Payments PoC
 
-Versión de la PoC: **1.1.1**.
+Versión de la PoC: **1.2.0**.
 
 PoC técnica en Python para demostrar una arquitectura **GraphRAG (Graph Retrieval-Augmented Generation)** sobre un caso funcional de **payment processing**: investigación de rechazos, timeouts y controles operativos de pagos.
 
@@ -107,8 +107,11 @@ flowchart LR
 ├── datasets/                  # Datos de ejemplo y cargador idempotente del grafo
 │   ├── data/
 │   └── load_dataset.py
-├── frontend/                  # UI Streamlit inspirada en el proyecto de referencia adjunto
+├── frontend/                  # UI conversacional Streamlit estilo ChatGPT con identidad visual Axiz
+│   ├── .streamlit/config.toml  # Tema oscuro y tokens visuales de Streamlit
+│   ├── assets/                 # Logo, ícono del agente y favicon del frontend de referencia
 │   ├── api_client.py
+│   ├── ui_helpers.py
 │   └── app.py
 ├── infrastructure/            # Docker Compose, Dockerfiles y ejemplos request/response
 │   ├── requests/
@@ -246,11 +249,14 @@ docker compose -f infrastructure/docker-compose.yml up --build
 
 La construcción está optimizada para evitar duplicar trabajo pesado:
 
-- `api` y `dataset-loader` usan **la misma imagen backend** (`axiz-graphrag-payments-poc-app:1.1.1`) construida desde `infrastructure/app.Dockerfile`;
+- `api` y `dataset-loader` usan **la misma imagen backend** (`axiz-graphrag-payments-poc-app:1.2.0`) construida desde `infrastructure/app.Dockerfile`;
 - PyTorch se instala desde el índice oficial **CPU-only**, porque esta PoC no requiere CUDA/GPU;
 - las dependencias se instalan antes de copiar el código de aplicación, por lo que cambios normales en `src/` reutilizan las capas pesadas del build;
 - el modelo de embeddings se almacena en un volumen `hf_cache` compartido entre `dataset-loader` y `api`, evitando descargarlo dos veces;
 - el frontend instala únicamente Streamlit/HTTPX y no arrastra las dependencias de GraphRAG; además sus dependencias se cachean antes de copiar el código de UI.
+- la interfaz adopta la construcción visual del proyecto de referencia suministrado: tema oscuro Axiz, logo e ícono empaquetados, navegación lateral y superficie conversacional central inspirada en ChatGPT;
+- mantiene múltiples conversaciones durante la sesión de Streamlit, búsqueda e historial agrupado, nuevo chat, renombrado/eliminación de conversaciones, preguntas sugeridas y panel opcional de actividad técnica GraphRAG;
+- el historial de UI permanece deliberadamente en `st.session_state`: no se agrega una base de datos solo para conversaciones porque no es necesaria para demostrar GraphRAG.
 
 En el primer `--build` todavía se descargarán Python, PyTorch CPU, GraphRAG y Sentence Transformers, por lo que puede tardar varios minutos según la conexión. En rebuilds posteriores, Docker reutiliza las capas si `pyproject.toml` no cambió.
 
@@ -543,7 +549,7 @@ Estas verificaciones están pensadas para ejecutarse antes de modificar o integr
 El entregable fue validado con Python 3.13 antes de generar el ZIP:
 
 - compilación sintáctica de `src`, `frontend`, `datasets` y `tests`: **OK**;
-- suite unitaria: **4/4 tests OK**;
+- suite unitaria: **10/10 tests OK**;
 - parsing de los JSON de datasets y ejemplos request/response: **OK**;
 - parsing del `docker-compose.yml`: **OK**;
 - consistencia referencial del dataset de ejemplo: **OK**;
