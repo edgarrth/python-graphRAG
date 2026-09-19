@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from collections import OrderedDict
 from datetime import UTC, datetime
 from html import escape
@@ -40,7 +41,7 @@ for key, default in {
     "show_evidence": True,
     "top_k": 4,
     "left_sidebar_collapsed": False,
-    "scroll_epoch": 0,
+    "scroll_nonce": 0,
 }.items():
     st.session_state.setdefault(key, default)
 
@@ -48,7 +49,10 @@ for key, default in {
 LEFT_COLLAPSED = bool(st.session_state.left_sidebar_collapsed)
 CHAT_MAX_WIDTH = 1040 if LEFT_COLLAPSED else 940
 STREAM_RENDER_BATCH_CHARS = 64
-CHAT_VIEWPORT_HEIGHT = 500
+# Fallback for the vertical space (px) that is NOT the message viewport (page
+# padding, top bar, composer, gaps, "☰" row). When the scroll driver JS runs it
+# measures the real value and overrides it through --axiz-chat-h.
+CHAT_RESERVED_PX = 284 + (56 if LEFT_COLLAPSED else 0)
 
 st.html(
     f"""
@@ -140,47 +144,92 @@ a {{ color:var(--axiz-accent); }}
   border-radius:999px;
 }}
 
-/* The center shell owns the complete conversational viewport. Header, chat
-   scroller and composer are laid out as a vertical flex column, so the input
-   can never be pushed below the viewport after the first rerun. */
+/* The center column flows naturally: top bar, message viewport, composer.
+   Nothing here depends on Streamlit's internal wrappers; the ONLY sized
+   element is the message viewport itself (explicit viewport-based height). */
 .st-key-center_shell {{
-  height:calc(100dvh - 1.44rem) !important;
-  max-height:calc(100dvh - 1.44rem) !important;
-  min-height:0 !important;
-  overflow:hidden !important;
-  position:relative !important;
-  padding-bottom:5.65rem !important;
-  box-sizing:border-box !important;
-}}
-.st-key-center_shell > div[data-testid="stVerticalBlock"],
-.st-key-center_shell > div > div[data-testid="stVerticalBlock"] {{
-  height:100% !important;
-  min-height:0 !important;
-  display:flex !important;
-  flex-direction:column !important;
-  gap:0 !important;
-  overflow:hidden !important;
-}}
-
-/* The message history is a native Streamlit fixed-height container.
-   Do not override its internal overflow/wrapper nodes: Streamlit owns the
-   scrollbar and autoscroll semantics. Earlier versions styled the internal
-   stVerticalBlockBorderWrapper and could clip long answers or swallow wheel
-   events. We only constrain the outer width here. */
-.st-key-center_shell div[data-testid="stElementContainer"]:has(div[class*="st-key-chat_scroll_panel_"]) {{
-  flex:0 0 auto !important;
+  height:auto !important;
+  max-height:none !important;
   min-height:0 !important;
   overflow:visible !important;
+  position:relative !important;
+  box-sizing:border-box !important;
 }}
-div[class*="st-key-chat_scroll_panel_"] {{
+
+/* One and only one scroll surface for the conversation: a regular keyed
+   Streamlit container whose overflow and bottom anchoring are owned by CSS. */
+.st-key-chat_scroll_panel {{
   width:100%;
   max-width:{CHAT_MAX_WIDTH}px;
-  min-height:0 !important;
+  /* Plain top-to-bottom column with an explicit height: overflow always goes
+     downwards, which is the direction every browser can scroll. */
+  display:flex !important;
+  flex-direction:column !important;
+  flex-wrap:nowrap !important;
+  flex:0 0 auto !important;
+  height:var(--axiz-chat-h, calc(100dvh - {CHAT_RESERVED_PX}px)) !important;
+  max-height:var(--axiz-chat-h, calc(100dvh - {CHAT_RESERVED_PX}px)) !important;
+  min-height:220px !important;
   margin-inline:auto;
-  padding:0 !important;
+  padding:.15rem .42rem 1rem .08rem !important;
   border:0 !important;
   background:transparent !important;
   box-sizing:border-box;
+  overflow-y:auto !important;
+  overflow-x:hidden !important;
+  overscroll-behavior-y:contain;
+  scrollbar-gutter:stable;
+  scroll-behavior:auto !important;
+  touch-action:pan-y;
+}}
+/* Everything between the viewport and the thread must be content-sized and
+   unclipped. Streamlit wrappers ship with height:100% / flex:1 1 0%, which
+   pins them to the viewport height and lets the thread spill out of them. */
+.st-key-chat_scroll_panel > *,
+.st-key-chat_scroll_panel *:has(.st-key-chat_thread),
+.st-key-chat_thread {{
+  flex:0 0 auto !important;
+  width:100% !important;
+  height:auto !important;
+  min-height:0 !important;
+  max-height:none !important;
+  overflow:visible !important;
+}}
+.st-key-chat_thread > * {{ flex-shrink:0 !important; }}
+/* CSS-only bottom pinning (works even if the JS driver cannot run): the 1px
+   anchor after the thread is the only scroll-anchoring candidate, so once the
+   user is at the bottom the browser keeps it there while the answer grows. */
+.st-key-chat_scroll_panel > *:not(:has(.chat-bottom-anchor)),
+.st-key-chat_thread {{ overflow-anchor:none; }}
+.chat-bottom-anchor {{ height:1px; overflow-anchor:auto; }}
+.st-key-chat_scroll_panel::-webkit-scrollbar {{ width:9px; }}
+.st-key-chat_scroll_panel::-webkit-scrollbar-track {{ background:transparent; }}
+.st-key-chat_scroll_panel::-webkit-scrollbar-thumb {{
+  background:#274052;
+  border:2px solid transparent;
+  background-clip:padding-box;
+  border-radius:999px;
+}}
+.st-key-chat_scroll_panel::-webkit-scrollbar-thumb:hover {{ background:#365970; background-clip:padding-box; }}
+
+/* Invisible host of the scroll driver script. It never owns wheel events. */
+.st-key-stream_scroll_driver {{
+  position:absolute !important;
+  width:1px !important;
+  height:1px !important;
+  min-height:0 !important;
+  overflow:hidden !important;
+  opacity:0 !important;
+  pointer-events:none !important;
+  margin:0 !important;
+  padding:0 !important;
+}}
+.st-key-stream_scroll_driver iframe {{
+  width:1px !important;
+  height:1px !important;
+  border:0 !important;
+  opacity:0 !important;
+  pointer-events:none !important;
 }}
 
 /* Streamlit keeps stale elements from the previous run until the current run
@@ -252,33 +301,30 @@ div[class*="st-key-chat_scroll_panel_"] {{
 .tech-pill {{ display:inline-block; border:1px solid #243d4e; background:#0d1d29; border-radius:999px; padding:.2rem .5rem; color:#86a0b2 !important; font-size:.68rem; margin:.12rem .18rem .12rem 0; }}
 .settings-note {{ border:1px solid #1f3545; background:#0a1822; border-radius:10px; padding:.6rem .66rem; color:#7991a3; font-size:.71rem; line-height:1.45; }}
 
-/* Inline composer: unlike a root-level st.chat_input, it does not create a
-   second page-level fixed layer and therefore cannot push/scroll the sidecards. */
+/* Inline composer is a normal flex row below the message viewport. It is not
+   absolute/fixed, so its full border and controls always remain inside the
+   viewport while the message region flexes to the remaining height. */
 .st-key-center_shell div[data-testid="stElementContainer"]:has(.st-key-chat_composer) {{
-  position:absolute !important;
-  left:0 !important;
-  right:0 !important;
-  bottom:0 !important;
-  z-index:500 !important;
-  margin:0 !important;
-  padding:.38rem 0 .08rem !important;
-  background:linear-gradient(180deg,rgba(8,16,24,0) 0%,rgba(8,16,24,.94) 22%,var(--axiz-bg) 48%);
-  pointer-events:none;
+  flex:0 0 auto !important;
+  min-height:0 !important;
+  margin:.55rem 0 0 !important;
+  padding:.18rem 0 .22rem !important;
+  background:var(--axiz-bg) !important;
+  overflow:visible !important;
 }}
 .st-key-chat_composer {{
   width:100%;
   max-width:{CHAT_MAX_WIDTH}px;
   margin:0 auto;
   position:relative !important;
-  z-index:501 !important;
-  pointer-events:auto;
+  z-index:20 !important;
 }}
 .st-key-chat_composer [data-testid="stChatInput"] {{ background:var(--axiz-card) !important; border:1px solid var(--axiz-line-strong) !important; border-radius:16px !important; box-shadow:0 12px 30px rgba(0,0,0,.26) !important; padding:.28rem .38rem .28rem .82rem; }}
 .st-key-chat_composer [data-testid="stChatInput"]:focus-within {{ border-color:#3a9cbc !important; box-shadow:0 0 0 1px rgba(67,195,236,.24),0 14px 32px rgba(0,0,0,.3) !important; }}
 .st-key-chat_composer [data-testid="stChatInput"] > div,
 .st-key-chat_composer [data-testid="stChatInput"] [data-baseweb="textarea"],
 .st-key-chat_composer [data-testid="stChatInput"] [data-baseweb="base-input"] {{ background:transparent !important; border:0 !important; box-shadow:none !important; }}
-.st-key-chat_composer [data-testid="stChatInput"] textarea {{ min-height:52px; background:transparent !important; border:0 !important; box-shadow:none !important; color:#e3edf4 !important; caret-color:var(--axiz-accent); resize:none; }}
+.st-key-chat_composer [data-testid="stChatInput"] textarea {{ min-height:52px; max-height:128px; background:transparent !important; border:0 !important; box-shadow:none !important; color:#e3edf4 !important; caret-color:var(--axiz-accent); resize:none; }}
 .st-key-chat_composer [data-testid="stChatInput"] textarea::placeholder {{ color:#61798b !important; opacity:1; }}
 .st-key-chat_composer [data-testid="stChatInput"] button {{ border:1px solid #2d6f87 !important; border-radius:11px !important; background:#14384a !important; color:#8ce5ff !important; }}
 
@@ -287,21 +333,13 @@ div[class*="st-key-chat_scroll_panel_"] {{
   html, body, .stApp,[data-testid="stAppViewContainer"],[data-testid="stMain"] {{ height:auto !important; max-height:none !important; overflow:auto !important; }}
   [data-testid="stMainBlockContainer"],.block-container {{ height:auto !important; max-height:none !important; overflow:visible !important; }}
   .st-key-left_nav_panel,.st-key-right_settings_panel {{ height:auto !important; max-height:none !important; overflow:visible !important; }}
-  .st-key-center_shell {{ height:auto !important; max-height:none !important; overflow:visible !important; }}
-  .st-key-center_shell > div[data-testid="stVerticalBlock"],
-  .st-key-center_shell > div > div[data-testid="stVerticalBlock"] {{ height:auto !important; display:block !important; overflow:visible !important; }}
-  .st-key-center_shell div[data-testid="stElementContainer"]:has(div[class*="st-key-chat_scroll_panel_"]) {{ overflow:visible !important; }}
-  .st-key-center_shell {{ padding-bottom:0 !important; }}
-  .st-key-center_shell div[data-testid="stElementContainer"]:has(.st-key-chat_composer) {{ position:static !important; padding:.4rem 0 0 !important; background:transparent !important; }}
+  .st-key-chat_scroll_panel {{ flex:0 0 auto !important; height:min(58dvh,520px) !important; max-height:min(58dvh,520px) !important; min-height:300px !important; overflow-y:auto !important; }}
+  .st-key-center_shell div[data-testid="stElementContainer"]:has(.st-key-chat_composer) {{ padding:.4rem 0 .2rem !important; background:transparent !important; }}
 }}
 </style>
     """
 )
 
-
-def request_scroll_to_latest() -> None:
-    """Recreate the chat viewport on the next rerun so autoscroll is re-armed."""
-    st.session_state.scroll_epoch = int(st.session_state.get("scroll_epoch", 0)) + 1
 
 
 def new_conversation() -> str:
@@ -315,7 +353,6 @@ def new_conversation() -> str:
         "messages": [],
     }
     st.session_state.current_conversation_id = conversation_id
-    request_scroll_to_latest()
     return conversation_id
 
 
@@ -350,7 +387,6 @@ def clear_current_conversation() -> None:
     conversation["messages"] = []
     conversation["title"] = "Nueva conversación"
     conversation["updated_at"] = datetime.now(UTC)
-    request_scroll_to_latest()
 
 
 def render_brand_header() -> None:
@@ -655,6 +691,96 @@ def render_empty_state() -> None:
 
 
 
+_SCROLL_DRIVER_JS = r"""
+(() => {
+  const NONCE = "__NONCE__";
+  let W = window;
+  try { if (window.parent && window.parent.document) W = window.parent; } catch (e) {}
+  const doc = W.document;
+  const PANE = '.st-key-chat_scroll_panel';
+
+  // One driver at a time (the script re-runs on every new question).
+  try { if (W.__axizChat && W.__axizChat.stop) W.__axizChat.stop(); } catch (e) {}
+
+  let pane = null, stick = true, raf = 0, lastTop = 0;
+  const dist = () => pane.scrollHeight - pane.clientHeight - pane.scrollTop;
+  const onScroll = () => {
+    // Scrolling up releases the follow immediately; coming back to the bottom
+    // re-arms it. Content growth alone never fires this with a smaller top.
+    if (pane.scrollTop < lastTop - 2) stick = false;
+    if (dist() < 48) stick = true;
+    lastTop = pane.scrollTop;
+  };
+  const fit = () => {
+    const root = doc.documentElement;
+    const comp = doc.querySelector('.st-key-chat_composer');
+    if (!pane || !comp || W.innerWidth <= 1050) { root.style.removeProperty('--axiz-chat-h'); return; }
+    // Only inputs that do NOT depend on the pane's own height (no feedback):
+    // where the pane starts and how tall the composer currently is.
+    const top = pane.getBoundingClientRect().top;
+    const composer = comp.getBoundingClientRect().height;
+    const h = Math.floor(W.innerHeight - top - composer - 52);
+    if (h >= 220) root.style.setProperty('--axiz-chat-h', h + 'px');
+  };
+  const tick = () => {
+    raf = 0;
+    const current = doc.querySelector(PANE);
+    if (!current) return;
+    if (current !== pane) {
+      if (pane) pane.removeEventListener('scroll', onScroll);
+      pane = current;
+      pane.addEventListener('scroll', onScroll, {passive: true});
+      stick = true;
+    }
+    fit();
+    if (stick) { pane.scrollTop = pane.scrollHeight; lastTop = pane.scrollTop; }
+  };
+  const schedule = () => { if (!raf) raf = W.requestAnimationFrame(tick); };
+
+  const observer = new MutationObserver(schedule);
+  observer.observe(doc.body, {childList: true, subtree: true, characterData: true});
+  W.addEventListener('resize', schedule);
+  const timer = W.setInterval(schedule, 400);
+
+  W.__axizChat = {
+    nonce: NONCE,
+    stop: () => {
+      observer.disconnect();
+      W.removeEventListener('resize', schedule);
+      W.clearInterval(timer);
+      if (pane) pane.removeEventListener('scroll', onScroll);
+    },
+  };
+  schedule();
+})();
+"""
+
+
+def render_scroll_driver(conversation_id: str) -> None:
+    """Install the chat scroll driver (follow-while-streaming + viewport fit).
+
+    The script text only changes when ``scroll_nonce`` or the conversation
+    changes (new question / other chat), so Streamlit re-executes it exactly
+    then, which re-arms "stick to bottom". While armed it follows the stream;
+    the first upward scroll by the user releases it until they return to the
+    bottom. It is rendered BEFORE the viewport so it is already running while
+    the SSE run blocks the script.
+    """
+    nonce = f"{conversation_id}:{st.session_state.scroll_nonce}"
+    script = _SCROLL_DRIVER_JS.replace("__NONCE__", nonce)
+    with st.container(key="stream_scroll_driver"):
+        if "unsafe_allow_javascript" in inspect.signature(st.html).parameters:
+            # Runs in the main document: no iframe sandbox/origin involved.
+            st.html(f"<script>{script}</script>", unsafe_allow_javascript=True)
+        else:
+            st.iframe(
+                f"<!doctype html><html><body><script>{script}</script></body></html>",
+                height=1,
+                width=1,
+                tab_index=-1,
+            )
+
+
 def render_streaming_assistant(client: ApiClient, question: str) -> None:
     """Render one pending GraphRAG request using the API SSE stream."""
     # This marker immediately suppresses any stale empty-state DOM left from
@@ -754,28 +880,19 @@ def render_chat_area(
     render_topbar(conversation, service_ready, readiness)
 
     pending_request = st.session_state.get("pending_request")
-    scroll_key = (
-        f"chat_scroll_panel_{conversation['id']}_{int(st.session_state.scroll_epoch)}"
-    )
-    # Follow new content only while a request is actively streaming. On the
-    # stable post-response rerun autoscroll is disabled, which returns full
-    # wheel/trackpad control to the user for browsing older messages.
-    follow_stream = bool(pending_request)
-    with st.container(
-        height=CHAT_VIEWPORT_HEIGHT,
-        border=False,
-        key=scroll_key,
-        autoscroll=follow_stream,
-    ):
-        messages = conversation["messages"]
-        if messages:
-            for message in messages:
-                render_message(message)
-        elif not pending_request:
-            render_empty_state()
+    render_scroll_driver(conversation["id"])
+    with st.container(border=False, key="chat_scroll_panel"):
+        with st.container(border=False, key="chat_thread"):
+            messages = conversation["messages"]
+            if messages:
+                for message in messages:
+                    render_message(message)
+            elif not pending_request:
+                render_empty_state()
 
-        if pending_request:
-            render_streaming_assistant(client, str(pending_request))
+            if pending_request:
+                render_streaming_assistant(client, str(pending_request))
+        st.html('<div class="chat-bottom-anchor" aria-hidden="true"></div>')
 
     # Nest chat_input so Streamlit renders it inline in the center column rather
     # than as a page-level fixed footer. This keeps both sidecards independent.
@@ -832,5 +949,5 @@ else:
 if submitted_question and not st.session_state.get("pending_request"):
     add_message("user", submitted_question)
     st.session_state.pending_request = submitted_question
-    request_scroll_to_latest()
+    st.session_state.scroll_nonce += 1
     st.rerun()

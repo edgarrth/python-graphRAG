@@ -99,32 +99,29 @@ def test_service_status_and_generation_provider_are_rendered_left() -> None:
     assert 'readiness.get("generation_provider"' in app_source
 
 
-def test_chat_uses_native_streamlit_scroll_and_turn_autoscroll() -> None:
+def test_chat_has_one_css_owned_scroll_surface_and_js_stream_follow() -> None:
     frontend = Path(__file__).resolve().parents[1] / "frontend"
     app_source = (frontend / "app.py").read_text(encoding="utf-8")
 
-    assert "chat_scroll_panel_{conversation['id']}_{int(st.session_state.scroll_epoch)}" in app_source
-    assert "CHAT_VIEWPORT_HEIGHT = 500" in app_source
-    assert "height=CHAT_VIEWPORT_HEIGHT" in app_source
-    assert "follow_stream = bool(pending_request)" in app_source
-    assert "autoscroll=follow_stream" in app_source
-    assert 'div[class*="st-key-chat_scroll_panel_"]' in app_source
-    # Do not override Streamlit's internal scroll wrapper. The native fixed-height
-    # container must own overflow so long answers and manual wheel scrolling work.
-    assert '[data-testid="stVerticalBlockBorderWrapper"]::-webkit-scrollbar' not in app_source
-    assert 'overflow-y:auto !important;' not in app_source.split('/* The message history is a native Streamlit fixed-height container.', 1)[1].split('/* Streamlit keeps stale elements', 1)[0]
-    assert 'scroll-behavior:smooth' not in app_source
-    assert 'key="chat_composer"' in app_source
-    assert "components.v1" not in app_source
-    assert "components.html" not in app_source
-
-    # Autoscroll is active only for the live request. The stable render after
-    # completion has pending_request=None, so manual history scrolling remains
-    # under user control instead of being pulled back to the bottom.
-    submit_block = app_source.split("if submitted_question", 1)[1]
-    assert "request_scroll_to_latest()" in submit_block
-    success_block = app_source.split('add_message("assistant", answer.strip(), payload)', 1)[1].split("except", 1)[0]
-    assert "request_scroll_to_latest()" not in success_block
+    assert 'key="chat_scroll_panel"' in app_source
+    assert '.st-key-chat_scroll_panel {' in app_source
+    assert 'overflow-y:auto !important;' in app_source
+    assert 'touch-action:pan-y;' in app_source
+    assert 'scroll-behavior:auto !important;' in app_source
+    # The viewport is the only sized element (explicit height, no dependency on
+    # Streamlit wrappers), scrolls top-to-bottom, and everything between it and
+    # the thread is forced to be content-sized so overflow stays scrollable.
+    assert 'height:var(--axiz-chat-h, calc(100dvh - {CHAT_RESERVED_PX}px)) !important;' in app_source
+    assert 'column-reverse' not in app_source
+    assert '.st-key-chat_scroll_panel *:has(.st-key-chat_thread),' in app_source
+    assert 'key="chat_thread"' in app_source
+    assert 'chat-bottom-anchor' in app_source
+    # The follow driver releases on upward scroll and is re-armed per question.
+    assert 'if (pane.scrollTop < lastTop - 2) stick = false;' in app_source
+    assert 'unsafe_allow_javascript' in app_source
+    assert 'st.session_state.scroll_nonce += 1' in app_source
+    assert 'autoscroll=True' not in app_source
+    assert 'components.v1' not in app_source
 
 
 def test_first_stream_hides_stale_empty_state_immediately() -> None:
@@ -176,14 +173,15 @@ def test_sse_rendering_batches_small_deltas_for_ui_performance() -> None:
     assert "pending_chars >= STREAM_RENDER_BATCH_CHARS" in app_source
     assert 'yield "".join(pending_parts)' in app_source
 
-def test_chat_composer_is_pinned_inside_center_shell() -> None:
+def test_chat_composer_is_a_visible_flex_row_inside_center_shell() -> None:
     frontend = Path(__file__).resolve().parents[1] / "frontend"
     app_source = (frontend / "app.py").read_text(encoding="utf-8")
 
     assert 'key="center_shell"' in app_source
     assert '.st-key-center_shell {' in app_source
-    assert 'position:relative !important;' in app_source
     assert 'div[data-testid="stElementContainer"]:has(.st-key-chat_composer)' in app_source
-    assert 'position:absolute !important;' in app_source
-    assert 'bottom:0 !important;' in app_source
-    assert 'padding-bottom:5.65rem !important;' in app_source
+    assert 'flex:0 0 auto !important;' in app_source
+    assert 'position:absolute !important;' not in app_source.split('/* Inline composer', 1)[1].split('/* Narrow windows', 1)[0]
+    assert 'padding:.18rem 0 .22rem !important;' in app_source
+    assert 'max-height:128px' in app_source
+

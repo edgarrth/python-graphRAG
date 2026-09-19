@@ -1,6 +1,6 @@
 # Axiz GraphRAG Payments PoC
 
-Versión de la PoC: **1.5.4**.
+Versión de la PoC: **1.5.5**.
 
 PoC técnica en Python para demostrar una arquitectura **GraphRAG (Graph Retrieval-Augmented Generation)** sobre un caso funcional de **payment processing**: investigación de rechazos, timeouts y controles operativos de pagos.
 
@@ -259,7 +259,7 @@ docker compose -f infrastructure/docker-compose.yml up --build
 
 La construcción está optimizada para evitar duplicar trabajo pesado:
 
-- `api` y `dataset-loader` usan **la misma imagen backend** (`axiz-graphrag-payments-poc-app:1.5.4`) construida desde `infrastructure/app.Dockerfile`;
+- `api` y `dataset-loader` usan **la misma imagen backend** (`axiz-graphrag-payments-poc-app:1.5.5`) construida desde `infrastructure/app.Dockerfile`;
 - PyTorch se instala desde el índice oficial **CPU-only**, porque esta PoC no requiere CUDA/GPU;
 - las dependencias se instalan antes de copiar el código de aplicación, por lo que cambios normales en `src/` reutilizan las capas pesadas del build;
 - el modelo de embeddings se almacena en un volumen `hf_cache` compartido entre `dataset-loader` y `api`, evitando descargarlo dos veces;
@@ -268,7 +268,7 @@ La construcción está optimizada para evitar duplicar trabajo pesado:
 - el **sidebar izquierdo es propio de la aplicación**, conserva nuevo chat, búsqueda, historial agrupado, selección, renombrado y eliminación de conversaciones y puede colapsarse como en ChatGPT; al ocultarlo desaparece realmente y el chat central gana un ancho moderado; también muestra el estado de API/Neo4j y las capacidades de recuperación activas;
 - el **sidebar derecho** queda reservado para configuración de la PoC: `Top K`, actividad técnica, evidencia recuperada, progreso de consulta y limpieza de la conversación actual;
 - el documento principal se mantiene **sin scroll en desktop**: los sidecards izquierdo/derecho quedan anclados al viewport y solo el historial central de chat tiene scroll; el scroll usa comportamiento nativo (`scroll-behavior: auto`) para evitar sensación de lentitud en mouse/trackpad;
-- el historial central usa un **`st.container` nativo de altura fija (500 px)** como única superficie de scroll; la PoC no sobrescribe el `overflow` interno de Streamlit, evitando recortes de respuestas largas y garantizando scroll manual con rueda/trackpad; `autoscroll` se activa únicamente durante SSE y queda desactivado en el render estable posterior;
+- el historial central usa **un único viewport propio (`.st-key-chat_scroll_panel`) con `overflow-y:auto`** y altura explícita (`--axiz-chat-h`, con respaldo `calc(100dvh - CHAT_RESERVED_PX)`); los wrappers de Streamlit entre el viewport y el hilo (`chat_thread`) se fuerzan a tamaño de contenido para que el desborde sea siempre scrolleable. Un driver JS (vía `st.html(..., unsafe_allow_javascript=True)` o, si no existe, `st.iframe`) sigue el streaming mientras el usuario está al final, se suelta al primer scroll hacia arriba, se rearma con cada pregunta y ajusta la altura del viewport al composer real; si el JS no pudiera ejecutarse, un ancla CSS (`overflow-anchor`) mantiene el seguimiento una vez que el usuario está al final;
 - `st.chat_input` se renderiza **inline dentro de la columna central**, evitando el footer global de Streamlit que antes podía desplazar o recortar los paneles laterales;
 - al comenzar el primer turno, la superficie de bienvenida se oculta inmediatamente mediante un marcador de streaming; esto evita que “¿Qué quieres investigar sobre tus pagos?” permanezca visible debajo de los primeros deltas mientras Streamlit termina de podar el DOM del render anterior;
 - el frontend consume `/api/v1/graphrag/query/stream` y pinta la respuesta progresivamente; los deltas SSE pequeños se agrupan en lotes cortos antes de renderizarse para reducir repaints y mantener fluido el scroll sin perder la sensación de streaming;
@@ -659,7 +659,7 @@ Ese patrón es especialmente útil en payment processing porque las explicacione
 ## 18. Referencias técnicas oficiales
 
 - Neo4j GraphRAG for Python: https://neo4j.com/docs/neo4j-graphrag-python/current/
-- Streamlit `st.container` / autoscroll: https://docs.streamlit.io/develop/api-reference/layout/st.container
+- Streamlit `st.iframe`: https://docs.streamlit.io/develop/api-reference/text/st.iframe
 - Streamlit `st.write_stream`: https://docs.streamlit.io/develop/api-reference/write-magic/st.write_stream
 - OpenAI Python streaming: https://github.com/openai/openai-python#streaming-responses
 - Guía RAG y retrievers de Neo4j: https://neo4j.com/docs/neo4j-graphrag-python/current/user_guide_rag.html
