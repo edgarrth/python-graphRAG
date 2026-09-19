@@ -9,6 +9,8 @@ from typing import Any
 from neo4j import GraphDatabase
 from neo4j_graphrag.embeddings.sentence_transformers import SentenceTransformerEmbeddings
 
+from pe.axiz.graphrag_payments.infrastructure.schema import build_schema_statements
+
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "datasets" / "data"
 
@@ -48,20 +50,11 @@ def wait_for_neo4j(driver: Any, retries: int = 60) -> None:
 
 
 def create_schema(driver: Any, embedding_dimension: int) -> None:
-    statements = [
-        "CREATE CONSTRAINT payment_id IF NOT EXISTS FOR (n:Payment) REQUIRE n.payment_id IS UNIQUE",
-        "CREATE CONSTRAINT customer_id IF NOT EXISTS FOR (n:Customer) REQUIRE n.customer_id IS UNIQUE",
-        "CREATE CONSTRAINT merchant_id IF NOT EXISTS FOR (n:Merchant) REQUIRE n.merchant_id IS UNIQUE",
-        "CREATE CONSTRAINT acquirer_id IF NOT EXISTS FOR (n:Acquirer) REQUIRE n.acquirer_id IS UNIQUE",
-        "CREATE CONSTRAINT method_id IF NOT EXISTS FOR (n:PaymentMethod) REQUIRE n.method_id IS UNIQUE",
-        "CREATE CONSTRAINT reason_code IF NOT EXISTS FOR (n:ReasonCode) REQUIRE n.code IS UNIQUE",
-        "CREATE CONSTRAINT chunk_id IF NOT EXISTS FOR (n:KnowledgeChunk) REQUIRE n.chunk_id IS UNIQUE",
-        f"CREATE VECTOR INDEX {VECTOR_INDEX_NAME} IF NOT EXISTS FOR (n:KnowledgeChunk) ON (n.embedding) "
-        f"OPTIONS {{indexConfig: {{`vector.dimensions`: {embedding_dimension}, "
-        "`vector.similarity_function`: 'cosine'}}}",
-        f"CREATE FULLTEXT INDEX {FULLTEXT_INDEX_NAME} IF NOT EXISTS "
-        "FOR (n:KnowledgeChunk) ON EACH [n.search_text]",
-    ]
+    statements = build_schema_statements(
+        vector_index_name=VECTOR_INDEX_NAME,
+        fulltext_index_name=FULLTEXT_INDEX_NAME,
+        embedding_dimension=embedding_dimension,
+    )
     for statement in statements:
         driver.execute_query(statement, database_=NEO4J_DATABASE)
 

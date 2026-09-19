@@ -1,5 +1,21 @@
 name: axiz-graphrag-payments-poc
 
+x-backend-image: &backend-image
+  image: axiz-graphrag-payments-poc-app:1.1.1
+  build:
+    context: ..
+    dockerfile: infrastructure/app.Dockerfile
+
+x-backend-environment: &backend-environment
+  NEO4J_URI: neo4j://neo4j:7687
+  NEO4J_USERNAME: neo4j
+  NEO4J_PASSWORD: ${NEO4J_PASSWORD:-axiz-graphrag-poc}
+  NEO4J_DATABASE: neo4j
+  EMBEDDING_MODEL: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+  VECTOR_INDEX_NAME: knowledge_embedding
+  FULLTEXT_INDEX_NAME: knowledge_fulltext
+  HF_HOME: /root/.cache/huggingface
+
 services:
   neo4j:
     image: neo4j:2026.08.1
@@ -21,18 +37,10 @@ services:
       start_period: 20s
 
   dataset-loader:
-    build:
-      context: ..
-      dockerfile: infrastructure/dataset.Dockerfile
+    <<: *backend-image
+    command: ["python", "datasets/load_dataset.py"]
     environment:
-      NEO4J_URI: neo4j://neo4j:7687
-      NEO4J_USERNAME: neo4j
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-axiz-graphrag-poc}
-      NEO4J_DATABASE: neo4j
-      EMBEDDING_MODEL: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
-      VECTOR_INDEX_NAME: knowledge_embedding
-      FULLTEXT_INDEX_NAME: knowledge_fulltext
-      HF_HOME: /root/.cache/huggingface
+      <<: *backend-environment
     volumes:
       - hf_cache:/root/.cache/huggingface
     depends_on:
@@ -41,21 +49,12 @@ services:
     restart: "no"
 
   api:
-    build:
-      context: ..
-      dockerfile: infrastructure/api.Dockerfile
+    <<: *backend-image
     environment:
-      NEO4J_URI: neo4j://neo4j:7687
-      NEO4J_USERNAME: neo4j
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-axiz-graphrag-poc}
-      NEO4J_DATABASE: neo4j
-      EMBEDDING_MODEL: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
-      VECTOR_INDEX_NAME: knowledge_embedding
-      FULLTEXT_INDEX_NAME: knowledge_fulltext
+      <<: *backend-environment
       GENERATION_PROVIDER: ${GENERATION_PROVIDER:-deterministic}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5-mini}
-      HF_HOME: /root/.cache/huggingface
     volumes:
       - hf_cache:/root/.cache/huggingface
     ports:

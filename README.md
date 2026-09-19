@@ -1,5 +1,7 @@
 # Axiz GraphRAG Payments PoC
 
+Versión de la PoC: **1.1.1**.
+
 PoC técnica en Python para demostrar una arquitectura **GraphRAG (Graph Retrieval-Augmented Generation)** sobre un caso funcional de **payment processing**: investigación de rechazos, timeouts y controles operativos de pagos.
 
 El foco no es construir un procesador de pagos completo. El objetivo es probar, de extremo a extremo, que una consulta en lenguaje natural puede:
@@ -111,8 +113,7 @@ flowchart LR
 ├── infrastructure/            # Docker Compose, Dockerfiles y ejemplos request/response
 │   ├── requests/
 │   ├── responses/
-│   ├── api.Dockerfile
-│   ├── dataset.Dockerfile
+│   ├── app.Dockerfile          # Imagen backend compartida por API y dataset-loader
 │   ├── frontend.Dockerfile
 │   └── docker-compose.yml
 ├── src/pe/axiz/graphrag_payments/
@@ -227,7 +228,7 @@ Swagger/OpenAPI queda disponible en `http://localhost:8000/docs`.
 ### Prerrequisitos
 
 - Docker Desktop / Docker Engine con Docker Compose v2.
-- Aproximadamente 3 GB libres para imágenes y modelo de embeddings.
+- Aproximadamente 2–3 GB libres para imágenes, dependencias ML CPU y modelo de embeddings.
 - La primera ejecución necesita acceso a Internet para descargar la imagen de Neo4j, dependencias Python y el modelo de Sentence Transformers.
 - Para ejecución local fuera de Docker se recomienda `uv`; Docker Compose no lo requiere.
 
@@ -243,7 +244,15 @@ Luego:
 docker compose -f infrastructure/docker-compose.yml up --build
 ```
 
-El modelo de embeddings se almacena en un volumen `hf_cache` compartido entre `dataset-loader` y `api`, evitando descargarlo dos veces. El frontend instala únicamente Streamlit/HTTPX y no arrastra las dependencias pesadas de GraphRAG.
+La construcción está optimizada para evitar duplicar trabajo pesado:
+
+- `api` y `dataset-loader` usan **la misma imagen backend** (`axiz-graphrag-payments-poc-app:1.1.1`) construida desde `infrastructure/app.Dockerfile`;
+- PyTorch se instala desde el índice oficial **CPU-only**, porque esta PoC no requiere CUDA/GPU;
+- las dependencias se instalan antes de copiar el código de aplicación, por lo que cambios normales en `src/` reutilizan las capas pesadas del build;
+- el modelo de embeddings se almacena en un volumen `hf_cache` compartido entre `dataset-loader` y `api`, evitando descargarlo dos veces;
+- el frontend instala únicamente Streamlit/HTTPX y no arrastra las dependencias de GraphRAG; además sus dependencias se cachean antes de copiar el código de UI.
+
+En el primer `--build` todavía se descargarán Python, PyTorch CPU, GraphRAG y Sentence Transformers, por lo que puede tardar varios minutos según la conexión. En rebuilds posteriores, Docker reutiliza las capas si `pyproject.toml` no cambió.
 
 El flujo de arranque es deliberadamente secuencial:
 
@@ -251,6 +260,23 @@ El flujo de arranque es deliberadamente secuencial:
 2. `dataset-loader` espera a Neo4j, crea constraints/índices y carga datos + embeddings;
 3. `api` inicia cuando el dataset terminó correctamente;
 4. `frontend` inicia cuando la API está saludable.
+
+
+### 9.1 Qué esperar del primer build
+
+La primera ejecución es la más costosa porque debe descargar las imágenes base y las dependencias ML. Para ver el detalle del progreso:
+
+```bash
+docker compose -f infrastructure/docker-compose.yml build --progress=plain
+```
+
+Luego levante los servicios sin reconstruir:
+
+```bash
+docker compose -f infrastructure/docker-compose.yml up
+```
+
+Para comprobar que Docker está reutilizando caché en una reconstrucción, las etapas de instalación de PyTorch/dependencias deberían aparecer como `CACHED` mientras `pyproject.toml` permanezca sin cambios.
 
 Servicios:
 
@@ -470,6 +496,8 @@ Luego reconstruya/reinicie la API:
 docker compose -f infrastructure/docker-compose.yml up -d --build api frontend
 ```
 
+Como `api` y `dataset-loader` comparten la misma definición de build e imagen, Docker reutiliza las mismas capas del backend. Si solo cambió configuración por variables de entorno y no el código/dependencias, puede omitirse `--build`.
+
 La etapa de retrieval no cambia: el LLM recibe únicamente el contexto GraphRAG ya recuperado.
 
 ---
@@ -519,7 +547,8 @@ El entregable fue validado con Python 3.13 antes de generar el ZIP:
 - parsing de los JSON de datasets y ejemplos request/response: **OK**;
 - parsing del `docker-compose.yml`: **OK**;
 - consistencia referencial del dataset de ejemplo: **OK**;
-- versiones directas de dependencias contrastadas con sus metadatos oficiales y con los rangos de compatibilidad de `neo4j-graphrag`.
+- versiones directas de dependencias contrastadas con sus metadatos oficiales y con los rangos de compatibilidad de `neo4j-graphrag`;
+- backend Docker consolidado para `api` + `dataset-loader`, con PyTorch CPU-only y capas reutilizables: **OK**.
 
 El entorno utilizado para empaquetar no dispone de un daemon Docker, por lo que la ejecución end-to-end de los contenedores no pudo realizarse aquí. El `docker compose` queda preparado para realizar esa validación en cualquier equipo con Docker Engine/Desktop y acceso a Internet para la descarga inicial de imágenes y del modelo de embeddings.
 
