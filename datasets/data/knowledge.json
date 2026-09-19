@@ -1,0 +1,38 @@
+[
+  {
+    "chunk_id": "KB-DECLINE-05",
+    "title": "Rechazo 05 - Do not honor",
+    "text": "El código 05 es un rechazo genérico emitido por el emisor. Operaciones debe revisar si el patrón está concentrado por BIN, comercio, adquirente o ventana de tiempo. No se debe reintentar de forma agresiva: aplicar políticas de retry controlado y observar si existe un código más específico en mensajes posteriores.",
+    "reason_codes": ["05"]
+  },
+  {
+    "chunk_id": "KB-DECLINE-51",
+    "title": "Rechazo 51 - Fondos insuficientes",
+    "text": "El código 51 indica fondos insuficientes. Es un rechazo originado normalmente en el emisor y no suele resolverse mediante cambio de adquirente. La estrategia recomendada es informar al cliente y, si el negocio lo permite, habilitar un reintento posterior iniciado por el cliente.",
+    "reason_codes": ["51"]
+  },
+  {
+    "chunk_id": "KB-ISSUER-91",
+    "title": "Código 91 - Emisor o switch no disponible",
+    "text": "El código 91 se asocia a indisponibilidad temporal del emisor o del switch de autorización. Debe correlacionarse con latencia, timeouts, adquirente y ventana temporal. Un rerouting controlado puede ser útil solo si el problema está del lado del adquirente y la red permite una ruta alternativa.",
+    "reason_codes": ["91"]
+  },
+  {
+    "chunk_id": "KB-3DS-TIMEOUT",
+    "title": "Timeout durante autenticación 3DS",
+    "text": "Un timeout de 3DS puede ocurrir antes de la autorización, por lo que debe distinguirse de un rechazo del emisor. Revisar latencia del ACS, conectividad del proveedor 3DS y expiración de la sesión. No reenviar automáticamente la autorización si la autenticación requerida no terminó.",
+    "reason_codes": ["3DS_TIMEOUT"]
+  },
+  {
+    "chunk_id": "KB-IDEMPOTENCY",
+    "title": "Idempotencia para evitar cobros duplicados",
+    "text": "Cada intento de creación de pago debe usar una clave de idempotencia estable por intención de cobro. Ante retries de red, el backend debe devolver el resultado previo en lugar de crear una nueva autorización. La clave debe almacenarse con el resultado y una ventana de retención coherente con el negocio.",
+    "reason_codes": ["DUPLICATE_RISK"]
+  },
+  {
+    "chunk_id": "KB-ROUTING-LATENCY",
+    "title": "Ruteo y latencia de adquirentes",
+    "text": "El ruteo puede considerar disponibilidad, latencia, costo y capacidad por adquirente. Para una incidencia operativa, comparar la tasa de éxito y la latencia por ruta en la misma ventana de tiempo. El rerouting no debe ocultar rechazos legítimos del emisor ni romper reglas de idempotencia.",
+    "reason_codes": ["91", "3DS_TIMEOUT"]
+  }
+]

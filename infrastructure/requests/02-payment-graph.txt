@@ -1,0 +1,1 @@
+GET /api/v1/payments/PAY-1003/graph

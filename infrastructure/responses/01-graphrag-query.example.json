@@ -1,0 +1,23 @@
+{
+  "question": "¿Por qué se rechazan pagos con código 05 y qué debería revisar operaciones?",
+  "answer": "La evidencia más relevante proviene del conocimiento sobre rechazo 05 y se complementa con pagos conectados en el grafo.",
+  "generation_provider": "deterministic",
+  "contexts": [
+    {
+      "chunk_id": "KB-DECLINE-05",
+      "title": "Rechazo 05 - Do not honor",
+      "text": "El código 05 es un rechazo genérico emitido por el emisor...",
+      "score": 0.9,
+      "reason_codes": [{"code": "05", "description": "Do not honor / rechazo genérico del emisor"}],
+      "related_payments": []
+    }
+  ],
+  "trace": {
+    "retriever": "HybridCypherRetriever",
+    "vector_index": "knowledge_embedding",
+    "fulltext_index": "knowledge_fulltext",
+    "graph_expansion": "KnowledgeChunk -> ReasonCode <- Payment -> Merchant / Acquirer",
+    "top_k": 4,
+    "returned_contexts": 1
+  }
+}

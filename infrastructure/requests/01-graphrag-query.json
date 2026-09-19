@@ -1,0 +1,5 @@
+{
+  "question": "¿Por qué se rechazan pagos con código 05 y qué debería revisar operaciones?",
+  "top_k": 4,
+  "include_context": true
+}

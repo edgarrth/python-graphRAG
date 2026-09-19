@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling==1.32.3"]
+build-backend = "hatchling.build"
+
+[project]
+name = "axiz-pe-graphrag-payments-poc"
+version = "1.0.0"
+description = "GraphRAG PoC for payment-processing incident investigation using Neo4j"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+license = {text = "MIT"}
+authors = [{name = "Axiz.pe"}]
+dependencies = [
+  "fastapi==0.141.1",
+  "uvicorn[standard]==0.53.0",
+  "pydantic==2.13.5",
+  "pydantic-settings==2.15.0",
+  "neo4j==6.3.1",
+  "neo4j-graphrag[sentence-transformers,openai]==1.19.0",
+  "sentence-transformers==3.4.1",
+  "openai==1.109.1",
+  "httpx==0.28.1",
+]
+
+[project.optional-dependencies]
+ui = ["streamlit==1.64.0"]
+dev = [
+  "pytest==9.1.1",
+  "ruff==0.16.8",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pe"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"datasets/*.py" = ["T201"]

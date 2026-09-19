@@ -1,0 +1,7 @@
+{
+  "payment_id": "PAY-1003",
+  "nodes": [
+    {"id": "<neo4j-element-id>", "labels": ["Payment"], "properties": {"payment_id": "PAY-1003", "status": "DECLINED"}}
+  ],
+  "edges": []
+}
