@@ -40,15 +40,15 @@ for key, default in {
     "show_evidence": True,
     "top_k": 4,
     "left_sidebar_collapsed": False,
+    "scroll_epoch": 0,
 }.items():
     st.session_state.setdefault(key, default)
 
 
 LEFT_COLLAPSED = bool(st.session_state.left_sidebar_collapsed)
 CHAT_MAX_WIDTH = 1040 if LEFT_COLLAPSED else 940
-INPUT_SHIFT_PX = -138 if LEFT_COLLAPSED else 0
 
-st.markdown(
+st.html(
     f"""
 <style>
 :root {{
@@ -63,486 +63,194 @@ st.markdown(
   --axiz-text:#dce8f0;
   --axiz-muted:#7890a3;
   --axiz-accent:#43c3ec;
-  --axiz-accent-soft:#112b38;
   --axiz-success:#4bd8a0;
 }}
 
+/* Desktop shell: the document itself never scrolls. Only the three rails may
+   scroll internally, which prevents navigation/settings from disappearing. */
 html, body, .stApp,
 [data-testid="stAppViewContainer"],
 [data-testid="stMain"] {{
+  height:100dvh !important;
+  max-height:100dvh !important;
+  overflow:hidden !important;
   background:var(--axiz-bg) !important;
   color:var(--axiz-text);
 }}
-
 html, body {{ color-scheme:dark; }}
 .stApp {{
   font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
 }}
-[data-testid="stHeader"] {{
-  background:transparent !important;
-  border-bottom:0 !important;
-}}
+[data-testid="stHeader"],
 [data-testid="stDecoration"],
 [data-testid="stMainMenu"],
 .stDeployButton,
-footer {{
-  display:none !important;
-}}
-[data-testid="stToolbar"] {{ background:transparent !important; }}
+footer {{ display:none !important; }}
 
-/* The PoC owns its left navigation so collapse behaves like ChatGPT: the
-   panel truly disappears and the conversation gains horizontal space. */
 [data-testid="stSidebar"],
 [data-testid="stSidebarCollapsedControl"],
 [data-testid="collapsedControl"],
-[data-testid="stSidebarCollapseButton"] {{
-  display:none !important;
-}}
+[data-testid="stSidebarCollapseButton"] {{ display:none !important; }}
 
 [data-testid="stMainBlockContainer"],
 .block-container {{
   width:100% !important;
-  max-width:1600px !important;
+  max-width:1800px !important;
+  height:100dvh !important;
+  max-height:100dvh !important;
+  overflow:hidden !important;
+  box-sizing:border-box !important;
   margin-inline:auto !important;
-  padding-top:.85rem !important;
-  padding-right:1.35rem !important;
-  padding-bottom:8.3rem !important;
-  padding-left:1.35rem !important;
+  padding:.72rem 1rem .72rem !important;
+}}
+[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"],
+.block-container > [data-testid="stVerticalBlock"] {{
+  height:100% !important;
+  min-height:0 !important;
 }}
 
 h1,h2,h3,h4 {{ color:#edf5fa !important; letter-spacing:-.015em; }}
 p,li,label,[data-testid="stCaptionContainer"] {{ color:#b7c8d4; }}
 a {{ color:var(--axiz-accent); }}
 
-/* Custom navigation and settings rails */
+/* Independent side rails. They remain fully anchored to the viewport while
+   the conversation scrolls in the middle. */
 .st-key-left_nav_panel,
 .st-key-right_settings_panel {{
+  height:calc(100dvh - 2.35rem) !important;
+  max-height:calc(100dvh - 2.35rem) !important;
+  min-height:0 !important;
+  overflow-y:auto !important;
+  overscroll-behavior:contain;
+  scrollbar-gutter:stable;
   background:linear-gradient(180deg,#0a1620 0%,#09131d 100%);
   border:1px solid var(--axiz-line);
   border-radius:16px;
   box-shadow:0 16px 42px rgba(0,0,0,.18);
   padding:.78rem .72rem .9rem;
+  box-sizing:border-box;
 }}
-.st-key-left_nav_panel {{
-  position:sticky !important;
-  top:.85rem !important;
-  max-height:calc(100vh - 1.7rem);
-  overflow-y:auto;
-}}
-.st-key-right_settings_panel {{
-  position:sticky !important;
-  top:.85rem !important;
-  height:calc(100vh - 1.7rem);
-  max-height:calc(100vh - 1.7rem);
-  overflow-y:auto;
-}}
-.st-key-left_nav_panel {{
-  height:calc(100vh - 1.7rem);
-}}
-
-/* Only the conversation scrolls. Navigation and settings stay in place. */
-.st-key-chat_scroll_panel {{
-  width:100%;
-  max-width:{CHAT_MAX_WIDTH}px;
-  margin-inline:auto;
-  min-height:420px;
-  height:calc(100vh - 235px) !important;
-  max-height:760px;
-  overflow-y:auto !important;
-  overscroll-behavior:contain;
-  scrollbar-gutter:stable;
-  padding:.15rem .35rem .65rem .05rem;
-  border:0 !important;
-  background:transparent !important;
-}}
-.st-key-chat_scroll_panel::-webkit-scrollbar {{ width:8px; }}
-.st-key-chat_scroll_panel::-webkit-scrollbar-thumb {{
+.st-key-left_nav_panel::-webkit-scrollbar,
+.st-key-right_settings_panel::-webkit-scrollbar {{ width:7px; }}
+.st-key-left_nav_panel::-webkit-scrollbar-thumb,
+.st-key-right_settings_panel::-webkit-scrollbar-thumb {{
   background:#1c3547;
   border-radius:999px;
 }}
-.st-key-chat_scroll_panel::-webkit-scrollbar-track {{ background:transparent; }}
 
-.panel-header {{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:.5rem;
-  margin:.05rem 0 .55rem;
+/* The chat is the only primary scrolling surface. Its key changes whenever a
+   new turn is submitted/completed so Streamlit re-engages autoscroll even if
+   the user had manually moved upward during the previous turn. */
+div[class*="st-key-chat_scroll_panel_"] {{
+  width:100%;
+  max-width:{CHAT_MAX_WIDTH}px;
+  height:clamp(360px, calc(100dvh - 13.25rem), 720px) !important;
+  max-height:clamp(360px, calc(100dvh - 13.25rem), 720px) !important;
+  min-height:360px !important;
+  margin-inline:auto;
+  overflow-y:auto !important;
+  overscroll-behavior:contain;
+  scrollbar-gutter:stable;
+  scroll-behavior:smooth;
+  padding:.08rem .34rem .5rem .04rem;
+  border:0 !important;
+  background:transparent !important;
+  box-sizing:border-box;
 }}
-.panel-title {{
-  color:#dce8f0;
-  font-size:.76rem;
-  font-weight:760;
-  letter-spacing:.055em;
-  text-transform:uppercase;
+div[class*="st-key-chat_scroll_panel_"]::-webkit-scrollbar {{ width:8px; }}
+div[class*="st-key-chat_scroll_panel_"]::-webkit-scrollbar-thumb {{
+  background:#1c3547;
+  border-radius:999px;
 }}
-.panel-subtitle {{
-  color:#657e91;
-  font-size:.68rem;
-  line-height:1.35;
-  margin:-.2rem 0 .65rem;
-}}
-.sidebar-brand {{
-  color:#f0f7fb;
-  font-size:.78rem;
-  font-weight:720;
-  text-align:center;
-  margin:.08rem 0 .72rem;
-}}
-.session-group {{
-  color:#667f92 !important;
-  font-size:.66rem;
-  font-weight:750;
-  letter-spacing:.08em;
-  margin:.82rem 0 .22rem;
-  text-transform:uppercase;
-}}
-.session-caption {{
-  color:#587084 !important;
-  font-size:.63rem;
-  margin:-.4rem 0 .22rem .28rem;
-}}
+div[class*="st-key-chat_scroll_panel_"]::-webkit-scrollbar-track {{ background:transparent; }}
+
+.panel-header {{ display:flex; align-items:center; justify-content:space-between; gap:.5rem; margin:.05rem 0 .55rem; }}
+.panel-title {{ color:#dce8f0; font-size:.76rem; font-weight:760; letter-spacing:.055em; text-transform:uppercase; }}
+.panel-subtitle {{ color:#657e91; font-size:.68rem; line-height:1.35; margin:-.2rem 0 .65rem; }}
+.sidebar-brand {{ color:#f0f7fb; font-size:.78rem; font-weight:720; text-align:center; margin:.08rem 0 .72rem; }}
+.session-group {{ color:#667f92 !important; font-size:.66rem; font-weight:750; letter-spacing:.08em; margin:.82rem 0 .22rem; text-transform:uppercase; }}
+.session-caption {{ color:#587084 !important; font-size:.63rem; margin:-.4rem 0 .22rem .28rem; }}
 
 .st-key-left_nav_panel .stButton button,
-.st-key-right_settings_panel .stButton button {{
-  border:1px solid #203747;
-  border-radius:9px;
-  background:#0e1d29;
-  color:#cbd9e3;
-}}
+.st-key-right_settings_panel .stButton button {{ border:1px solid #203747; border-radius:9px; background:#0e1d29; color:#cbd9e3; }}
 .st-key-left_nav_panel .stButton button {{ text-align:left; }}
-.st-key-left_nav_panel .stButton button[kind="primary"] {{
-  background:#14384a;
-  border-color:#2c91b0;
-  color:#8ce5ff;
-}}
-.st-key-left_nav_panel .stTextInput input {{
-  background:#07121b;
-  border-color:#294154;
-  color:var(--axiz-text);
-}}
-.st-key-left_nav_panel hr,
-.st-key-right_settings_panel hr {{ border-color:var(--axiz-line); }}
+.st-key-left_nav_panel .stButton button[kind="primary"] {{ background:#14384a; border-color:#2c91b0; color:#8ce5ff; }}
+.st-key-left_nav_panel .stTextInput input {{ background:#07121b; border-color:#294154; color:var(--axiz-text); }}
+.st-key-left_nav_panel hr,.st-key-right_settings_panel hr {{ border-color:var(--axiz-line); }}
 
-.left-status-card {{
-  display:flex;
-  align-items:center;
-  gap:.55rem;
-  margin:.15rem 0 .45rem;
-  padding:.62rem .68rem;
-  border:1px solid #214254;
-  border-radius:11px;
-  background:#0b1a24;
-  color:#bfd0da;
-  font-size:.73rem;
-  line-height:1.35;
-}}
-.left-status-card.ready {{
-  border-color:#1f5b48;
-  background:#0c211d;
-}}
-.left-status-card.offline {{
-  border-color:#60443a;
-  background:#211714;
-}}
-.left-status-indicator {{
-  width:8px;
-  height:8px;
-  flex:0 0 8px;
-  border-radius:50%;
-  background:#748797;
-}}
-.left-status-card.ready .left-status-indicator {{
-  background:var(--axiz-success);
-  box-shadow:0 0 8px rgba(75,216,160,.42);
-}}
-.left-status-card.offline .left-status-indicator {{
-  background:#f0a071;
-}}
+.left-status-card {{ display:flex; align-items:center; gap:.55rem; margin:.15rem 0 .45rem; padding:.62rem .68rem; border:1px solid #214254; border-radius:11px; background:#0b1a24; color:#bfd0da; font-size:.73rem; line-height:1.35; }}
+.left-status-card.ready {{ border-color:#1f5b48; background:#0c211d; }}
+.left-status-card.offline {{ border-color:#60443a; background:#211714; }}
+.left-status-indicator {{ width:8px; height:8px; flex:0 0 8px; border-radius:50%; background:#748797; }}
+.left-status-card.ready .left-status-indicator {{ background:var(--axiz-success); box-shadow:0 0 8px rgba(75,216,160,.42); }}
+.left-status-card.offline .left-status-indicator {{ background:#f0a071; }}
 .left-tech-row {{ margin:0 0 .58rem; }}
 .left-tech-row .tech-pill {{ font-size:.61rem; padding:.16rem .38rem; }}
 
-/* A compact ChatGPT-like reopen affordance that belongs to the content area,
-   not to a permanent empty rail. */
-.st-key-left_reopen_row {{
-  margin:0 0 .3rem;
-}}
-.st-key-left_reopen_row .stButton > button {{
-  width:42px !important;
-  min-width:42px !important;
-  height:40px !important;
-  min-height:40px !important;
-  padding:0 !important;
-  border:1px solid var(--axiz-line-strong) !important;
-  border-radius:10px !important;
-  background:#0d1d29 !important;
-  color:#a9c2d2 !important;
-  box-shadow:0 7px 22px rgba(0,0,0,.2) !important;
-}}
-.st-key-left_reopen_row .stButton > button:hover {{
-  border-color:#3a9cbc !important;
-  background:#123044 !important;
-  color:#8ce5ff !important;
-}}
+.st-key-left_reopen_row {{ margin:0 0 .3rem; }}
+.st-key-left_reopen_row .stButton > button {{ width:42px !important; min-width:42px !important; height:40px !important; min-height:40px !important; padding:0 !important; border:1px solid var(--axiz-line-strong) !important; border-radius:10px !important; background:#0d1d29 !important; color:#a9c2d2 !important; box-shadow:0 7px 22px rgba(0,0,0,.2) !important; }}
+.st-key-left_reopen_row .stButton > button:hover {{ border-color:#3a9cbc !important; background:#123044 !important; color:#8ce5ff !important; }}
 
-.axiz-topbar {{
-  display:flex;
-  justify-content:space-between;
-  gap:16px;
-  align-items:flex-end;
-  width:100%;
-  max-width:{CHAT_MAX_WIDTH}px;
-  margin:0 auto 1rem;
-  padding:.12rem 0 .9rem;
-  border-bottom:1px solid var(--axiz-line);
-}}
-.axiz-topbar h1 {{
-  margin:0;
-  font-size:1.14rem;
-  line-height:1.25;
-}}
-.axiz-topbar .status {{
-  margin-top:.32rem;
-  color:#728b9e;
-  font-size:.71rem;
-}}
-.axiz-dot {{
-  display:inline-block;
-  width:7px;
-  height:7px;
-  border-radius:50%;
-  background:var(--axiz-success);
-  box-shadow:0 0 9px rgba(75,216,160,.45);
-  margin-right:7px;
-}}
+.axiz-topbar {{ display:flex; justify-content:space-between; gap:16px; align-items:flex-end; width:100%; max-width:{CHAT_MAX_WIDTH}px; margin:0 auto .55rem; padding:.08rem 0 .7rem; border-bottom:1px solid var(--axiz-line); }}
+.axiz-topbar h1 {{ margin:0; font-size:1.14rem; line-height:1.25; }}
+.axiz-topbar .status {{ margin-top:.28rem; color:#728b9e; font-size:.71rem; }}
+.axiz-dot {{ display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--axiz-success); box-shadow:0 0 9px rgba(75,216,160,.45); margin-right:7px; }}
 .axiz-dot.offline {{ background:#748797; box-shadow:none; }}
-.axiz-chips {{
-  display:flex;
-  gap:7px;
-  flex-wrap:wrap;
-  justify-content:flex-end;
-}}
-.axiz-chip {{
-  border:1px solid #243d4e;
-  background:#0d1d29;
-  color:#86a0b2;
-  border-radius:999px;
-  padding:.32rem .58rem;
-  font:.66rem ui-monospace,SFMono-Regular,Consolas,monospace;
-}}
+.axiz-chips {{ display:flex; gap:7px; flex-wrap:wrap; justify-content:flex-end; }}
+.axiz-chip {{ border:1px solid #243d4e; background:#0d1d29; color:#86a0b2; border-radius:999px; padding:.32rem .58rem; font:.66rem ui-monospace,SFMono-Regular,Consolas,monospace; }}
 
-.hero-spacer {{ height:7vh; }}
-.hero-title {{
-  color:#edf5fa;
-  font-size:1.72rem;
-  font-weight:780;
-  letter-spacing:-.035em;
-  margin:.62rem 0 .32rem;
-}}
-.hero-subtitle {{
-  color:#7890a3;
-  font-size:.92rem;
-  line-height:1.55;
-  max-width:650px;
-  margin:0 auto;
-}}
-.suggestion-label {{
-  color:#667f92;
-  font-size:.7rem;
-  font-weight:750;
-  letter-spacing:.06em;
-  margin:1.25rem 0 .42rem;
-  text-transform:uppercase;
-}}
+.hero-spacer {{ height:2.5vh; }}
+.hero-title {{ color:#edf5fa; font-size:1.72rem; font-weight:780; letter-spacing:-.035em; margin:.62rem 0 .32rem; }}
+.hero-subtitle {{ color:#7890a3; font-size:.92rem; line-height:1.55; max-width:650px; margin:0 auto; }}
+.suggestion-label {{ color:#667f92; font-size:.7rem; font-weight:750; letter-spacing:.06em; margin:1.25rem 0 .42rem; text-transform:uppercase; }}
 
-/* Return the conversation to the narrower visual rhythm of v1.2.0. When the
-   left navigation collapses, only a modest amount of extra width is granted. */
-[data-testid="stChatMessage"] {{
-  width:100%;
-  max-width:{CHAT_MAX_WIDTH}px;
-  margin-inline:auto;
-  background:transparent;
-  border:0;
-  padding:.33rem .08rem .85rem;
-}}
-[data-testid="stChatMessage"] [data-testid="stChatMessageContent"] {{
-  background:var(--axiz-card);
-  border:1px solid var(--axiz-line);
-  border-radius:13px;
-  padding:.95rem 1.05rem;
-  box-shadow:0 14px 34px rgba(0,0,0,.14);
-}}
-[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"])
-[data-testid="stChatMessageContent"] {{
-  background:var(--axiz-card-user);
-  border-color:#323653;
-  max-width:82%;
-  margin-left:auto;
-}}
-[data-testid="stChatMessageAvatarUser"],
-[data-testid="stChatMessageAvatarAssistant"] {{
-  border:1px solid #29445a;
-  border-radius:9px;
-  background:#0f2230;
-}}
+[data-testid="stChatMessage"] {{ width:100%; max-width:{CHAT_MAX_WIDTH}px; margin-inline:auto; background:transparent; border:0; padding:.33rem .08rem .85rem; }}
+[data-testid="stChatMessage"] [data-testid="stChatMessageContent"] {{ background:var(--axiz-card); border:1px solid var(--axiz-line); border-radius:13px; padding:.95rem 1.05rem; box-shadow:0 14px 34px rgba(0,0,0,.14); }}
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) [data-testid="stChatMessageContent"] {{ background:var(--axiz-card-user); border-color:#323653; max-width:82%; margin-left:auto; }}
+[data-testid="stChatMessageAvatarUser"],[data-testid="stChatMessageAvatarAssistant"] {{ border:1px solid #29445a; border-radius:9px; background:#0f2230; }}
 
-[data-testid="stExpander"], [data-testid="stStatusWidget"] {{
-  background:#0a1721;
-  border:1px solid var(--axiz-line);
-  border-radius:11px;
-}}
-[data-testid="stDataFrame"] {{
-  border:1px solid var(--axiz-line);
-  border-radius:10px;
-  overflow:hidden;
-}}
-.stButton>button[kind="primary"],
-.stFormSubmitButton>button[kind="primary"] {{
-  background:var(--axiz-accent);
-  border-color:var(--axiz-accent);
-  color:#041018;
-  font-weight:750;
-}}
-.stButton>button {{
-  border-radius:9px;
-  border-color:#294154;
-  background:#101e2a;
-  color:#c6d7e3;
-}}
-.stTextInput input,.stTextArea textarea {{
-  background:#091721;
-  border-color:#294154;
-  color:#e4eef5;
-}}
-.stTextInput input::placeholder,.stTextArea textarea::placeholder {{
-  color:#60788a;
-  opacity:1;
-}}
-.stTextInput input:focus,.stTextArea textarea:focus {{
-  border-color:#3a9cbc;
-  box-shadow:0 0 0 1px #3a9cbc;
-}}
+[data-testid="stExpander"], [data-testid="stStatusWidget"] {{ background:#0a1721; border:1px solid var(--axiz-line); border-radius:11px; }}
+[data-testid="stDataFrame"] {{ border:1px solid var(--axiz-line); border-radius:10px; overflow:hidden; }}
+.stButton>button[kind="primary"],.stFormSubmitButton>button[kind="primary"] {{ background:var(--axiz-accent); border-color:var(--axiz-accent); color:#041018; font-weight:750; }}
+.stButton>button {{ border-radius:9px; border-color:#294154; background:#101e2a; color:#c6d7e3; }}
+.stTextInput input,.stTextArea textarea {{ background:#091721; border-color:#294154; color:#e4eef5; }}
+.stTextInput input::placeholder,.stTextArea textarea::placeholder {{ color:#60788a; opacity:1; }}
+.stTextInput input:focus,.stTextArea textarea:focus {{ border-color:#3a9cbc; box-shadow:0 0 0 1px #3a9cbc; }}
 [data-testid="stMain"] .stButton > button {{ min-height:3rem; }}
 
-.trace-grid {{
-  display:grid;
-  grid-template-columns:155px 1fr;
-  gap:.36rem .75rem;
-  font-size:.84rem;
-}}
+.trace-grid {{ display:grid; grid-template-columns:155px 1fr; gap:.36rem .75rem; font-size:.84rem; }}
 .trace-label {{ color:var(--axiz-muted); }}
 .trace-value {{ overflow-wrap:anywhere; color:#c7d6df; }}
-.tech-pill {{
-  display:inline-block;
-  border:1px solid #243d4e;
-  background:#0d1d29;
-  border-radius:999px;
-  padding:.2rem .5rem;
-  color:#86a0b2 !important;
-  font-size:.68rem;
-  margin:.12rem .18rem .12rem 0;
-}}
-.settings-note {{
-  border:1px solid #1f3545;
-  background:#0a1822;
-  border-radius:10px;
-  padding:.6rem .66rem;
-  color:#7991a3;
-  font-size:.71rem;
-  line-height:1.45;
-}}
+.tech-pill {{ display:inline-block; border:1px solid #243d4e; background:#0d1d29; border-radius:999px; padding:.2rem .5rem; color:#86a0b2 !important; font-size:.68rem; margin:.12rem .18rem .12rem 0; }}
+.settings-note {{ border:1px solid #1f3545; background:#0a1822; border-radius:10px; padding:.6rem .66rem; color:#7991a3; font-size:.71rem; line-height:1.45; }}
 
-/* The fixed composer follows the central chat. Expanded navigation is
-   symmetrical with the right settings rail. When navigation is collapsed,
-   the composer shifts left to remain visually aligned with the enlarged chat. */
-[data-testid="stBottom"],
-[data-testid="stBottom"] > div,
-[data-testid="stBottomBlockContainer"],
-.stBottom,
-.stChatFloatingInputContainer {{
-  background:transparent !important;
-  border:0 !important;
-  box-shadow:none !important;
-}}
-[data-testid="stBottomBlockContainer"] {{
-  width:calc(100% - 2rem) !important;
-  max-width:{CHAT_MAX_WIDTH}px !important;
-  margin-inline:auto !important;
-  transform:translateX({INPUT_SHIFT_PX}px);
-  background:linear-gradient(180deg,rgba(8,16,24,0) 0%,rgba(8,16,24,.96) 28%,var(--axiz-bg) 100%) !important;
-  padding-top:1rem !important;
-  padding-right:0 !important;
-  padding-bottom:.85rem !important;
-  padding-left:0 !important;
-}}
-[data-testid="stChatInput"] {{
-  background:var(--axiz-card) !important;
-  border:1px solid var(--axiz-line-strong) !important;
-  border-radius:16px !important;
-  box-shadow:0 16px 40px rgba(0,0,0,.32) !important;
-  padding:.35rem .4rem .35rem .85rem;
-}}
-[data-testid="stChatInput"]:focus-within {{
-  border-color:#3a9cbc !important;
-  box-shadow:0 0 0 1px rgba(67,195,236,.24),0 18px 42px rgba(0,0,0,.34) !important;
-}}
-[data-testid="stChatInput"] > div,
-[data-testid="stChatInput"] [data-baseweb="textarea"],
-[data-testid="stChatInput"] [data-baseweb="base-input"] {{
-  background:transparent !important;
-  border:0 !important;
-  box-shadow:none !important;
-}}
-[data-testid="stChatInput"] textarea {{
-  min-height:56px;
-  background:transparent !important;
-  border:0 !important;
-  box-shadow:none !important;
-  color:#e3edf4 !important;
-  caret-color:var(--axiz-accent);
-  resize:none;
-}}
-[data-testid="stChatInput"] textarea::placeholder {{
-  color:#61798b !important;
-  opacity:1;
-}}
-[data-testid="stChatInput"] button {{
-  border:1px solid #2d6f87 !important;
-  border-radius:11px !important;
-  background:#14384a !important;
-  color:#8ce5ff !important;
-}}
-[data-testid="stChatInput"] button:hover:not(:disabled) {{
-  background:#19506a !important;
-  border-color:#43c3ec !important;
-}}
-[data-testid="stChatInput"] button:disabled {{
-  background:#11222d !important;
-  border-color:#203847 !important;
-  color:#607786 !important;
-  opacity:1;
-}}
+/* Inline composer: unlike a root-level st.chat_input, it does not create a
+   second page-level fixed layer and therefore cannot push/scroll the sidecards. */
+.st-key-chat_composer {{ width:100%; max-width:{CHAT_MAX_WIDTH}px; margin:.48rem auto 0; }}
+.st-key-chat_composer [data-testid="stChatInput"] {{ background:var(--axiz-card) !important; border:1px solid var(--axiz-line-strong) !important; border-radius:16px !important; box-shadow:0 12px 30px rgba(0,0,0,.26) !important; padding:.28rem .38rem .28rem .82rem; }}
+.st-key-chat_composer [data-testid="stChatInput"]:focus-within {{ border-color:#3a9cbc !important; box-shadow:0 0 0 1px rgba(67,195,236,.24),0 14px 32px rgba(0,0,0,.3) !important; }}
+.st-key-chat_composer [data-testid="stChatInput"] > div,
+.st-key-chat_composer [data-testid="stChatInput"] [data-baseweb="textarea"],
+.st-key-chat_composer [data-testid="stChatInput"] [data-baseweb="base-input"] {{ background:transparent !important; border:0 !important; box-shadow:none !important; }}
+.st-key-chat_composer [data-testid="stChatInput"] textarea {{ min-height:52px; background:transparent !important; border:0 !important; box-shadow:none !important; color:#e3edf4 !important; caret-color:var(--axiz-accent); resize:none; }}
+.st-key-chat_composer [data-testid="stChatInput"] textarea::placeholder {{ color:#61798b !important; opacity:1; }}
+.st-key-chat_composer [data-testid="stChatInput"] button {{ border:1px solid #2d6f87 !important; border-radius:11px !important; background:#14384a !important; color:#8ce5ff !important; }}
 
-@media(max-width:1180px) {{
-  [data-testid="stMainBlockContainer"], .block-container {{
-    padding-inline:.85rem !important;
-  }}
-  [data-testid="stBottomBlockContainer"] {{
-    transform:none !important;
-    max-width:min(900px,calc(100% - 1.25rem)) !important;
-  }}
-}}
-
-@media(max-width:900px) {{
-  .st-key-right_settings_panel {{ position:relative; top:0; max-height:none; }}
-  .axiz-topbar {{ align-items:flex-start; flex-direction:column; }}
-  .axiz-chips {{ justify-content:flex-start; }}
-  .trace-grid {{ grid-template-columns:1fr; }}
+/* Narrow windows fall back to normal document flow so controls remain usable. */
+@media(max-width:1050px) {{
+  html, body, .stApp,[data-testid="stAppViewContainer"],[data-testid="stMain"] {{ height:auto !important; max-height:none !important; overflow:auto !important; }}
+  [data-testid="stMainBlockContainer"],.block-container {{ height:auto !important; max-height:none !important; overflow:visible !important; }}
+  .st-key-left_nav_panel,.st-key-right_settings_panel {{ height:auto !important; max-height:none !important; overflow:visible !important; }}
+  div[class*="st-key-chat_scroll_panel_"] {{ height:540px !important; max-height:540px !important; }}
 }}
 </style>
-    """,
-    unsafe_allow_html=True,
+    """
 )
+
+
+def request_scroll_to_latest() -> None:
+    """Recreate the chat viewport on the next rerun so autoscroll is re-armed."""
+    st.session_state.scroll_epoch = int(st.session_state.get("scroll_epoch", 0)) + 1
 
 
 def new_conversation() -> str:
@@ -556,6 +264,7 @@ def new_conversation() -> str:
         "messages": [],
     }
     st.session_state.current_conversation_id = conversation_id
+    request_scroll_to_latest()
     return conversation_id
 
 
@@ -590,6 +299,7 @@ def clear_current_conversation() -> None:
     conversation["messages"] = []
     conversation["title"] = "Nueva conversación"
     conversation["updated_at"] = datetime.now(UTC)
+    request_scroll_to_latest()
 
 
 def render_brand_header() -> None:
@@ -944,6 +654,7 @@ def render_streaming_assistant(client: ApiClient, question: str) -> None:
                 }
             render_assistant_payload(payload)
             add_message("assistant", answer.strip(), payload)
+            request_scroll_to_latest()
         except (httpx.HTTPError, RuntimeError, ValueError) as exc:
             error_message = (
                 "No fue posible completar la consulta GraphRAG por streaming. "
@@ -954,6 +665,7 @@ def render_streaming_assistant(client: ApiClient, question: str) -> None:
             st.error(error_message)
             st.caption(str(exc))
             add_message("assistant", error_message)
+            request_scroll_to_latest()
         finally:
             st.session_state.pending_request = None
 
@@ -965,12 +677,16 @@ def render_chat_area(
     conversation: dict[str, Any],
     service_ready: bool,
     readiness: dict[str, Any],
-) -> None:
+) -> str | None:
     render_topbar(conversation, service_ready, readiness)
+
+    scroll_key = (
+        f"chat_scroll_panel_{conversation['id']}_{int(st.session_state.scroll_epoch)}"
+    )
     with st.container(
-        height=620,
+        height=560,
         border=False,
-        key="chat_scroll_panel",
+        key=scroll_key,
         autoscroll=True,
     ):
         messages = conversation["messages"]
@@ -983,6 +699,17 @@ def render_chat_area(
 
         if pending_request:
             render_streaming_assistant(client, str(pending_request))
+
+    # Nest chat_input so Streamlit renders it inline in the center column rather
+    # than as a page-level fixed footer. This keeps both sidecards independent.
+    pending_example = st.session_state.pop("pending_question", None)
+    with st.container(key="chat_composer"):
+        question = st.chat_input(
+            "Pregunta sobre rechazos, incidencias o controles de payment processing",
+            disabled=bool(st.session_state.get("pending_request")),
+            key=f"chat-input-{conversation['id']}",
+        )
+    return question or pending_example
 
 
 if not st.session_state.conversations:
@@ -998,10 +725,10 @@ except httpx.HTTPError:
     service_ready = False
 
 conversation = current_conversation()
+submitted_question: str | None = None
 
 if st.session_state.left_sidebar_collapsed:
     center_col, right_col = st.columns([1.0, 0.29], gap="large")
-    # Render the fixed settings rail before a potentially long SSE request.
     with right_col:
         render_right_settings()
     with center_col:
@@ -1009,25 +736,22 @@ if st.session_state.left_sidebar_collapsed:
             if st.button("☰", key="open-left", help="Mostrar historial"):
                 st.session_state.left_sidebar_collapsed = False
                 st.rerun()
-        render_chat_area(client, conversation, service_ready, readiness_payload)
+        submitted_question = render_chat_area(
+            client, conversation, service_ready, readiness_payload
+        )
 else:
     left_col, center_col, right_col = st.columns([0.29, 0.94, 0.29], gap="large")
-    # Sidecards are rendered first and the conversation is the only scrolling surface.
     with left_col:
         render_left_navigation(service_ready, readiness_payload)
     with right_col:
         render_right_settings()
     with center_col:
-        render_chat_area(client, conversation, service_ready, readiness_payload)
+        submitted_question = render_chat_area(
+            client, conversation, service_ready, readiness_payload
+        )
 
-pending_example = st.session_state.pop("pending_question", None)
-question = st.chat_input(
-    "Pregunta sobre rechazos, incidencias o controles de payment processing",
-    disabled=bool(st.session_state.get("pending_request")),
-)
-question = question or pending_example
-
-if question and not st.session_state.get("pending_request"):
-    add_message("user", question)
-    st.session_state.pending_request = question
+if submitted_question and not st.session_state.get("pending_request"):
+    add_message("user", submitted_question)
+    st.session_state.pending_request = submitted_question
+    request_scroll_to_latest()
     st.rerun()

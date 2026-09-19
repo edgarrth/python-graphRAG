@@ -1,6 +1,6 @@
 # Axiz GraphRAG Payments PoC
 
-Versión de la PoC: **1.4.0**.
+Versión de la PoC: **1.5.0**.
 
 PoC técnica en Python para demostrar una arquitectura **GraphRAG (Graph Retrieval-Augmented Generation)** sobre un caso funcional de **payment processing**: investigación de rechazos, timeouts y controles operativos de pagos.
 
@@ -28,7 +28,8 @@ La PoC usa `HybridCypherRetriever` del paquete oficial `neo4j-graphrag` para com
 
 - **vector retrieval** sobre embeddings multilingües;
 - **full-text retrieval** para coincidencias lexicales como `05`, `91`, `3DS`, etc.;
-- **Cypher graph expansion** para recuperar entidades relacionadas.
+- **Cypher graph expansion** para recuperar entidades relacionadas;
+- **exact entity anchoring** para códigos explícitos: una pregunta por `código 91` ancla primero el `ReasonCode 91` antes de completar el contexto con el ranking híbrido.
 
 La documentación oficial de Neo4j describe `HybridCypherRetriever` precisamente como un retriever que busca por vector + full-text y luego ejecuta una consulta Cypher para recorrer más contexto del grafo.
 
@@ -39,6 +40,7 @@ La documentación oficial de Neo4j describe `HybridCypherRetriever` precisamente
 | Vector search | Índice `knowledge_embedding` en `KnowledgeChunk.embedding` |
 | Full-text search | Índice `knowledge_fulltext` sobre `KnowledgeChunk.search_text` |
 | Retrieval híbrido | `HybridCypherRetriever` combina ambos índices con ranker `linear`, peso vectorial configurable y un candidate pool ampliado |
+| Exact reason-code anchoring | Si la pregunta nombra explícitamente `código 05/51/91/...`, Neo4j recupera primero los chunks conectados exactamente a ese `ReasonCode` y luego completa con retrieval híbrido |
 | Graph traversal | Cypher expande desde conocimiento a códigos y pagos relacionados |
 | Grounding | La respuesta se arma exclusivamente con contextos recuperados |
 | Trazabilidad | API devuelve retriever, índices, expansión, ranking y contextos |
@@ -146,7 +148,7 @@ El paquete principal cumple el namespace solicitado: **`pe.axiz`**.
 
 ### `application/retrieval.py`
 
-Implementa el núcleo tecnológico. Usa `SentenceTransformerEmbeddings` y `HybridCypherRetriever`. El retriever primero identifica `KnowledgeChunk` relevantes y luego ejecuta una expansión Cypher que agrega:
+Implementa el núcleo tecnológico. Usa `SentenceTransformerEmbeddings` y `HybridCypherRetriever`. El retriever identifica `KnowledgeChunk` relevantes y luego ejecuta una expansión Cypher. Cuando la pregunta contiene un código explícito (`código 91`, por ejemplo), primero ejecuta un **anclaje exacto por entidad** sobre `ReasonCode` para impedir que la similitud semántica sustituya el código consultado por otro cercano. Después completa los resultados con `HybridCypherRetriever`. La expansión agrega:
 
 - `ReasonCode` explicados por el chunk;
 - `Payment` que fallaron con esos códigos;
@@ -257,7 +259,7 @@ docker compose -f infrastructure/docker-compose.yml up --build
 
 La construcción está optimizada para evitar duplicar trabajo pesado:
 
-- `api` y `dataset-loader` usan **la misma imagen backend** (`axiz-graphrag-payments-poc-app:1.4.0`) construida desde `infrastructure/app.Dockerfile`;
+- `api` y `dataset-loader` usan **la misma imagen backend** (`axiz-graphrag-payments-poc-app:1.5.0`) construida desde `infrastructure/app.Dockerfile`;
 - PyTorch se instala desde el índice oficial **CPU-only**, porque esta PoC no requiere CUDA/GPU;
 - las dependencias se instalan antes de copiar el código de aplicación, por lo que cambios normales en `src/` reutilizan las capas pesadas del build;
 - el modelo de embeddings se almacena en un volumen `hf_cache` compartido entre `dataset-loader` y `api`, evitando descargarlo dos veces;
@@ -265,7 +267,9 @@ La construcción está optimizada para evitar duplicar trabajo pesado:
 - la interfaz adopta la construcción visual del proyecto de referencia suministrado: tema oscuro Axiz, logo e ícono empaquetados y superficie conversacional central inspirada en ChatGPT;
 - el **sidebar izquierdo es propio de la aplicación**, conserva nuevo chat, búsqueda, historial agrupado, selección, renombrado y eliminación de conversaciones y puede colapsarse como en ChatGPT; al ocultarlo desaparece realmente y el chat central gana un ancho moderado; también muestra el estado de API/Neo4j y las capacidades de recuperación activas;
 - el **sidebar derecho** queda reservado para configuración de la PoC: `Top K`, actividad técnica, evidencia recuperada, progreso de consulta y limpieza de la conversación actual;
-- el chat central vive dentro de un **contenedor con scroll propio y `autoscroll=True`**; por ello los sidecards permanecen visibles mientras solo se desplaza la conversación y, al enviar/recibir mensajes, el chat baja automáticamente;
+- el documento principal se mantiene **sin scroll en desktop**: los sidecards izquierdo/derecho quedan anclados al viewport y solo el historial central de chat tiene scroll;
+- el chat central usa un contenedor nativo con `autoscroll=True` y una clave de viewport que se renueva al enviar/completar un turno, reactivando el seguimiento al último mensaje incluso después de un scroll manual previo;
+- `st.chat_input` se renderiza **inline dentro de la columna central**, evitando el footer global de Streamlit que antes podía desplazar o recortar los paneles laterales;
 - el frontend consume `/api/v1/graphrag/query/stream` y va pintando los deltas SSE mientras el API recupera contexto y genera la respuesta;
 - el chat mantiene un ancho de lectura contenido (aprox. 940 px con navegación abierta y 1040 px cuando se colapsa), evitando estirar las respuestas por toda la pantalla;
 - el panel izquierdo muestra el **proveedor de generación realmente reportado por `api-1`** (`OpenAI · modelo` o `Deterministic`), evitando confundir la configuración de un contenedor temporal con la del API activo;
@@ -337,7 +341,7 @@ uv sync --extra dev --extra ui
 uv run python datasets/load_dataset.py
 ```
 
-El script es idempotente: usa `MERGE` para nodos/relaciones y `CREATE ... IF NOT EXISTS` para schema/indexes. La v1.4.0 amplía el corpus; si se actualiza desde una versión anterior, vuelva a ejecutar el `dataset-loader` para crear los nuevos nodos y embeddings.
+El script es idempotente: usa `MERGE` para nodos/relaciones y `CREATE ... IF NOT EXISTS` para schema/indexes. Si se actualiza desde una versión anterior con un dataset diferente, vuelva a ejecutar el `dataset-loader` para sincronizar nodos y embeddings.
 
 Archivos precargados:
 
@@ -463,6 +467,16 @@ Revise en la respuesta:
 - `related_payments`: evidencia transaccional obtenida recorriendo el grafo;
 - `trace.retriever`: debe ser `HybridCypherRetriever`;
 - `trace.graph_expansion`: muestra el recorrido aplicado.
+
+Para validar el anclaje exacto por código:
+
+```bash
+curl -s -X POST http://localhost:8000/api/v1/graphrag/query \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"¿Para qué sirve el código 91?","top_k":4,"include_context":true}'
+```
+
+El primer contexto debe corresponder al código `91`; en `trace.retrieval_strategy` debe aparecer `exact_reason_code_anchor+hybrid` y `trace.explicit_reason_codes` debe contener `91`.
 
 ### Test 6 — consulta semántica sin citar un código
 

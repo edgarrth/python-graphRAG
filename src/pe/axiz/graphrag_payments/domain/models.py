@@ -45,6 +45,8 @@ class RetrievalTrace(BaseModel):
     ranker: str = "naive"
     vector_weight: float | None = None
     effective_search_ratio: int = 1
+    retrieval_strategy: str = "hybrid"
+    explicit_reason_codes: list[str] = Field(default_factory=list)
 
 
 class GraphRagQueryResponse(BaseModel):

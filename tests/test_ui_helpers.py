@@ -33,6 +33,8 @@ def test_trace_rows_has_expected_graphrag_fields() -> None:
                 "vector_weight": 0.35,
                 "effective_search_ratio": 3,
                 "returned_contexts": 4,
+                "retrieval_strategy": "exact_reason_code_anchor+hybrid",
+                "explicit_reason_codes": ["91"],
             }
         )
     )
@@ -40,6 +42,8 @@ def test_trace_rows_has_expected_graphrag_fields() -> None:
     assert rows["Ranker híbrido"] == "linear"
     assert rows["Peso vectorial"] == "0.35"
     assert rows["Search ratio"] == "3"
+    assert rows["Estrategia"] == "exact_reason_code_anchor+hybrid"
+    assert rows["Códigos anclados"] == "91"
     assert rows["Contextos retornados"] == "4"
 
 
@@ -95,15 +99,17 @@ def test_service_status_and_generation_provider_are_rendered_left() -> None:
     assert 'readiness.get("generation_provider"' in app_source
 
 
-def test_chat_has_own_scroll_surface_and_native_autoscroll() -> None:
+def test_chat_has_isolated_scroll_surface_and_rearmed_autoscroll() -> None:
     frontend = Path(__file__).resolve().parents[1] / "frontend"
     app_source = (frontend / "app.py").read_text(encoding="utf-8")
 
-    assert 'key="chat_scroll_panel"' in app_source
-    assert "height=620" in app_source
+    assert "chat_scroll_panel_{conversation['id']}_{int(st.session_state.scroll_epoch)}" in app_source
+    assert "height=560" in app_source
     assert "autoscroll=True" in app_source
-    assert ".st-key-chat_scroll_panel" in app_source
-    assert "overflow-y:auto !important" in app_source
+    assert 'div[class*="st-key-chat_scroll_panel_"]' in app_source
+    assert "request_scroll_to_latest()" in app_source
+    assert 'key="chat_composer"' in app_source
+    assert "overflow:hidden !important" in app_source
     assert "components.v1" not in app_source
     assert "components.html" not in app_source
 

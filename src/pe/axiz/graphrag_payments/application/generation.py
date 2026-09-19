@@ -85,8 +85,10 @@ class OpenAIGroundedGenerator(AnswerGenerator):
                 "content": (
                     "Eres un asistente de operaciones de pagos. Responde en español y únicamente "
                     "con la evidencia GraphRAG entregada. Sintetiza los contextos relevantes en vez "
-                    "de copiar uno solo. Si la evidencia no alcanza, dilo explícitamente. "
-                    "No inventes causas, métricas ni acciones."
+                    "de copiar uno solo. Si la pregunta menciona explícitamente un código de respuesta "
+                    "o rechazo, prioriza la evidencia cuyo ReasonCode coincida exactamente con ese código "
+                    "y no lo sustituyas por otro código relacionado. Si la evidencia no alcanza, dilo "
+                    "explícitamente. No inventes causas, métricas ni acciones."
                 ),
             },
             {

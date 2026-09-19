@@ -62,3 +62,5 @@ def test_retriever_uses_linear_hybrid_configuration() -> None:
     assert "effective_search_ratio=self._effective_search_ratio" in source
     assert "ranker=self._ranker" in source
     assert 'self._alpha if self._ranker == "linear" else None' in source
+    assert "EXACT_REASON_CODE_QUERY" in source
+    assert "exact_reason_code_anchor+hybrid" in source

@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title=settings.app_name,
-    version="1.4.0",
+    version="1.5.0",
     description=(
         "PoC de GraphRAG para investigación operativa de fallas de payment processing. "
         "Combina recuperación híbrida con expansión de relaciones en Neo4j y streaming SSE."

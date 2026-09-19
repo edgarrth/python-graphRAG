@@ -47,19 +47,22 @@ class GraphRagService:
             self._retriever = retriever
         return retriever
 
-    def _trace(self, top_k: int, returned_contexts: int) -> RetrievalTrace:
+    def _trace(self, top_k: int, retrieval: Any) -> RetrievalTrace:
+        contexts = getattr(retrieval, "contexts", [])
         return RetrievalTrace(
             retriever="HybridCypherRetriever",
             vector_index=self._settings.vector_index_name,
             fulltext_index=self._settings.fulltext_index_name,
             graph_expansion="KnowledgeChunk -> ReasonCode <- Payment -> Merchant / Acquirer",
             top_k=top_k,
-            returned_contexts=returned_contexts,
+            returned_contexts=len(contexts),
             ranker=self._settings.hybrid_ranker,
             vector_weight=(
                 self._settings.hybrid_alpha if self._settings.hybrid_ranker == "linear" else None
             ),
             effective_search_ratio=self._settings.effective_search_ratio,
+            retrieval_strategy=str(getattr(retrieval, "strategy", "hybrid")),
+            explicit_reason_codes=list(getattr(retrieval, "explicit_reason_codes", [])),
         )
 
     def query(self, request: GraphRagQueryRequest) -> GraphRagQueryResponse:
@@ -75,7 +78,7 @@ class GraphRagService:
                 self._settings.openai_model if self._settings.generation_provider == "openai" else None
             ),
             contexts=contexts,
-            trace=self._trace(top_k, len(retrieval.contexts)),
+            trace=self._trace(top_k, retrieval),
         )
 
     def query_stream(self, request: GraphRagQueryRequest) -> Iterator[dict[str, Any]]:
@@ -90,7 +93,7 @@ class GraphRagService:
         retrieval_started = perf_counter()
         retrieval = self._get_retriever().search(request.question, top_k)
         retrieval_ms = round((perf_counter() - retrieval_started) * 1000, 1)
-        trace = self._trace(top_k, len(retrieval.contexts))
+        trace = self._trace(top_k, retrieval)
         yield {
             "event": "retrieval",
             "data": {

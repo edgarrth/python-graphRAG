@@ -49,5 +49,7 @@ def trace_rows(trace: dict[str, Any] | None) -> list[tuple[str, str]]:
         ("Ranker híbrido", str(trace.get("ranker", "—"))),
         ("Peso vectorial", str(trace.get("vector_weight", "—"))),
         ("Search ratio", str(trace.get("effective_search_ratio", "—"))),
+        ("Estrategia", str(trace.get("retrieval_strategy", "hybrid"))),
+        ("Códigos anclados", ", ".join(trace.get("explicit_reason_codes") or []) or "—"),
         ("Contextos retornados", str(trace.get("returned_contexts", 0))),
     ]
