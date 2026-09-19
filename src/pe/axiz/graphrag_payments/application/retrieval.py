@@ -75,9 +75,18 @@ class GraphAwareRetriever:
             result_formatter=_formatter,
             neo4j_database=settings.neo4j_database,
         )
+        self._ranker = settings.hybrid_ranker
+        self._alpha = settings.hybrid_alpha
+        self._effective_search_ratio = settings.effective_search_ratio
 
     def search(self, question: str, top_k: int) -> RetrievalResult:
-        result = self._retriever.search(query_text=question, top_k=top_k)
+        result = self._retriever.search(
+            query_text=question,
+            top_k=top_k,
+            effective_search_ratio=self._effective_search_ratio,
+            ranker=self._ranker,
+            alpha=self._alpha if self._ranker == "linear" else None,
+        )
         contexts: list[ContextItem] = []
         for item in result.items:
             contexts.append(ContextItem.model_validate_json(item.content))

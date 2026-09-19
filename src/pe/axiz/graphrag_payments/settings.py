@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     fulltext_index_name: str = "knowledge_fulltext"
     default_top_k: int = Field(default=4, ge=1, le=20)
     max_top_k: int = Field(default=10, ge=1, le=50)
+    hybrid_ranker: Literal["naive", "linear"] = "linear"
+    hybrid_alpha: float = Field(default=0.35, ge=0.0, le=1.0)
+    effective_search_ratio: int = Field(default=3, ge=1, le=10)
 
     generation_provider: Literal["deterministic", "openai"] = "deterministic"
     openai_api_key: str | None = None

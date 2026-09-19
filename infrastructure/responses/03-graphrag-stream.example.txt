@@ -1,0 +1,17 @@
+event: stage
+data: {"stage":"retrieval","message":"Recuperando contexto GraphRAG…"}
+
+event: retrieval
+data: {"message":"Contexto híbrido recuperado y grafo expandido.","retrieval_ms":42.7,"trace":{"retriever":"HybridCypherRetriever"},"contexts":[]}
+
+event: stage
+data: {"stage":"generation","message":"Generando respuesta con gpt-5-mini…"}
+
+event: delta
+data: {"delta":"La idempotencia"}
+
+event: delta
+data: {"delta":" permite reutilizar el resultado previo..."}
+
+event: complete
+data: {"answer":"La idempotencia permite reutilizar el resultado previo...","generation_provider":"openai","generation_model":"gpt-5-mini","timings":{"retrieval_ms":42.7,"generation_ms":812.4,"total_ms":855.6}}

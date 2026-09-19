@@ -1,6 +1,6 @@
 # Axiz GraphRAG Payments PoC
 
-Versión de la PoC: **1.3.3**.
+Versión de la PoC: **1.4.0**.
 
 PoC técnica en Python para demostrar una arquitectura **GraphRAG (Graph Retrieval-Augmented Generation)** sobre un caso funcional de **payment processing**: investigación de rechazos, timeouts y controles operativos de pagos.
 
@@ -38,10 +38,11 @@ La documentación oficial de Neo4j describe `HybridCypherRetriever` precisamente
 |---|---|
 | Vector search | Índice `knowledge_embedding` en `KnowledgeChunk.embedding` |
 | Full-text search | Índice `knowledge_fulltext` sobre `KnowledgeChunk.search_text` |
-| Retrieval híbrido | `HybridCypherRetriever` combina ambos índices |
+| Retrieval híbrido | `HybridCypherRetriever` combina ambos índices con ranker `linear`, peso vectorial configurable y un candidate pool ampliado |
 | Graph traversal | Cypher expande desde conocimiento a códigos y pagos relacionados |
 | Grounding | La respuesta se arma exclusivamente con contextos recuperados |
-| Trazabilidad | API devuelve retriever, índices, expansión y contextos |
+| Trazabilidad | API devuelve retriever, índices, expansión, ranking y contextos |
+| Streaming reactivo | SSE (`text/event-stream`) emite etapas de retrieval, deltas del LLM y evento final |
 | Ejecución sin credenciales externas | `GENERATION_PROVIDER=deterministic` por defecto |
 | Generación con LLM real | Opcional con `GENERATION_PROVIDER=openai` y `OPENAI_API_KEY` |
 
@@ -51,13 +52,19 @@ La documentación oficial de Neo4j describe `HybridCypherRetriever` precisamente
 
 ## 2. Caso de uso funcional: investigación de payment processing
 
-El dataset simula pagos de tres comercios ruteados por dos adquirentes. Algunos pagos son aprobados y otros fallan con códigos como:
+El dataset ampliado simula **24 pagos**, **5 comercios**, **2 adquirentes** y **15 chunks de conocimiento**. Incluye aprobaciones, rechazos, fallas técnicas, controles antifraude y estados operativos como:
 
 - `05`: do not honor;
 - `51`: fondos insuficientes;
 - `91`: emisor/switch no disponible;
 - `3DS_TIMEOUT`: timeout durante autenticación;
-- `DUPLICATE_RISK`: riesgo de duplicidad por retry sin idempotencia.
+- `DUPLICATE_RISK`: riesgo de duplicidad por retry sin idempotencia;
+- `54`, `57`, `61`, `96`: expiración, operación no permitida, límite de monto y falla técnica;
+- `FRAUD_VELOCITY`: bloqueo por reglas de velocity;
+- `CAPTURE_FAILED`: captura fallida luego de autorización;
+- `WEBHOOK_DELAY`: evento tardío / consistencia eventual;
+- `REFUND_PENDING`: reembolso pendiente;
+- `TOKENIZATION_ERROR`: falla de tokenización.
 
 Ejemplo de pregunta:
 
@@ -74,7 +81,7 @@ La PoC recupera el conocimiento que explica el código y expande el grafo hacia 
 ```mermaid
 flowchart LR
     U[Usuario] --> UI[Frontend Streamlit]
-    UI --> API[FastAPI]
+    UI -->|HTTP + SSE| API[FastAPI]
     API --> RET[GraphAwareRetriever]
     RET --> HYB[HybridCypherRetriever]
     HYB --> VEC[Neo4j Vector Index]
@@ -82,8 +89,8 @@ flowchart LR
     HYB --> G[(Neo4j Graph)]
     G --> EXP[Cypher Graph Expansion]
     EXP --> GEN[Grounded Generator]
-    GEN --> API
-    API --> UI
+    GEN -->|deltas| API
+    API -->|SSE stage / retrieval / delta / complete| UI
 
     DATA[datasets/load_dataset.py] --> EMB[SentenceTransformer Embeddings]
     EMB --> G
@@ -94,7 +101,7 @@ flowchart LR
 
 - **No PostgreSQL**: los datos necesarios para la prueba viven naturalmente como nodos/relaciones.
 - **No Redis**: no se prueba caching ni session state distribuido.
-- **No Kafka/RabbitMQ**: no se prueba procesamiento asíncrono o streaming de eventos.
+- **No Kafka/RabbitMQ**: el streaming requerido es de respuesta HTTP y se implementa directamente con **SSE**; no existe un caso que justifique un broker.
 - **No Pinecone/Qdrant/Weaviate**: Neo4j ya provee el índice vectorial requerido.
 - **No Flyway**: Flyway está orientado a migraciones SQL. Para Neo4j esta PoC usa DDL Cypher idempotente (`CREATE ... IF NOT EXISTS`) dentro del cargador de datasets, evitando duplicar scripts de inicialización.
 
@@ -220,7 +227,8 @@ El índice vectorial y full-text se aplican a `KnowledgeChunk`; la evidencia tra
 | 2 | GET | `/health/ready` | Verifica que el servicio esté listo | Ejecuta una consulta mínima a Neo4j |
 | 3 | GET | `/api/v1/graph/schema` | Permite inspeccionar el modelo cargado | Devuelve labels, relationship types e índices de Neo4j |
 | 4 | GET | `/api/v1/payments/{payment_id}/graph` | Inspecciona el vecindario de un pago | Recupera nodos/relaciones conectados al payment |
-| 5 | POST | `/api/v1/graphrag/query` | Responde una pregunta operativa | Hybrid retrieval + graph expansion + grounded generation |
+| 5 | POST | `/api/v1/graphrag/query` | Responde una pregunta operativa de forma síncrona | Hybrid retrieval + graph expansion + grounded generation |
+| 6 | POST | `/api/v1/graphrag/query/stream` | Responde progresivamente para la UI | SSE: `stage` → `retrieval` → `delta` → `complete` |
 
 Swagger/OpenAPI queda disponible en `http://localhost:8000/docs`.
 
@@ -249,7 +257,7 @@ docker compose -f infrastructure/docker-compose.yml up --build
 
 La construcción está optimizada para evitar duplicar trabajo pesado:
 
-- `api` y `dataset-loader` usan **la misma imagen backend** (`axiz-graphrag-payments-poc-app:1.3.3`) construida desde `infrastructure/app.Dockerfile`;
+- `api` y `dataset-loader` usan **la misma imagen backend** (`axiz-graphrag-payments-poc-app:1.4.0`) construida desde `infrastructure/app.Dockerfile`;
 - PyTorch se instala desde el índice oficial **CPU-only**, porque esta PoC no requiere CUDA/GPU;
 - las dependencias se instalan antes de copiar el código de aplicación, por lo que cambios normales en `src/` reutilizan las capas pesadas del build;
 - el modelo de embeddings se almacena en un volumen `hf_cache` compartido entre `dataset-loader` y `api`, evitando descargarlo dos veces;
@@ -257,8 +265,10 @@ La construcción está optimizada para evitar duplicar trabajo pesado:
 - la interfaz adopta la construcción visual del proyecto de referencia suministrado: tema oscuro Axiz, logo e ícono empaquetados y superficie conversacional central inspirada en ChatGPT;
 - el **sidebar izquierdo es propio de la aplicación**, conserva nuevo chat, búsqueda, historial agrupado, selección, renombrado y eliminación de conversaciones y puede colapsarse como en ChatGPT; al ocultarlo desaparece realmente y el chat central gana un ancho moderado; también muestra el estado de API/Neo4j y las capacidades de recuperación activas;
 - el **sidebar derecho** queda reservado para configuración de la PoC: `Top K`, actividad técnica, evidencia recuperada, progreso de consulta y limpieza de la conversación actual;
-- al iniciar una conversación vacía o crear un nuevo chat, la UI restablece explícitamente el scroll al inicio para evitar que el foco del composer deje la página desplazada hacia abajo;
+- el chat central vive dentro de un **contenedor con scroll propio y `autoscroll=True`**; por ello los sidecards permanecen visibles mientras solo se desplaza la conversación y, al enviar/recibir mensajes, el chat baja automáticamente;
+- el frontend consume `/api/v1/graphrag/query/stream` y va pintando los deltas SSE mientras el API recupera contexto y genera la respuesta;
 - el chat mantiene un ancho de lectura contenido (aprox. 940 px con navegación abierta y 1040 px cuando se colapsa), evitando estirar las respuestas por toda la pantalla;
+- el panel izquierdo muestra el **proveedor de generación realmente reportado por `api-1`** (`OpenAI · modelo` o `Deterministic`), evitando confundir la configuración de un contenedor temporal con la del API activo;
 - se mantienen las cuatro preguntas sugeridas en el estado inicial y el input inferior fijo;
 - el historial de UI permanece deliberadamente en `st.session_state`: no se agrega una base de datos solo para conversaciones porque no es necesaria para demostrar GraphRAG.
 
@@ -327,7 +337,7 @@ uv sync --extra dev --extra ui
 uv run python datasets/load_dataset.py
 ```
 
-El script es idempotente: usa `MERGE` para nodos/relaciones y `CREATE ... IF NOT EXISTS` para schema/indexes.
+El script es idempotente: usa `MERGE` para nodos/relaciones y `CREATE ... IF NOT EXISTS` para schema/indexes. La v1.4.0 amplía el corpus; si se actualiza desde una versión anterior, vuelva a ejecutar el `dataset-loader` para crear los nuevos nodos y embeddings.
 
 Archivos precargados:
 
@@ -407,11 +417,13 @@ Comprueba que la API realmente puede consultar Neo4j.
 curl -s http://localhost:8000/health/ready
 ```
 
-Esperado:
+Esperado cuando OpenAI está activo:
 
 ```json
-{"status":"ready","neo4j":"reachable"}
+{"status":"ready","neo4j":"reachable","generation_provider":"openai","generation_model":"gpt-5-mini","openai_key_configured":true}
 ```
+
+Este endpoint permite verificar la configuración del **API activo**, no la de un contenedor temporal.
 
 ### Test 3 — inspeccionar el schema del grafo
 
@@ -482,6 +494,36 @@ curl -s -X POST http://localhost:8000/api/v1/graphrag/query \
   }'
 ```
 
+### Test 8 — streaming SSE
+
+Demuestra el flujo reactivo que consume el frontend. `curl -N` desactiva el buffering de salida para ver los eventos a medida que llegan.
+
+```bash
+curl -N -X POST http://localhost:8000/api/v1/graphrag/query/stream \
+  -H 'Accept: text/event-stream' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "question":"¿Cómo evito cobros duplicados cuando el cliente reintenta por un timeout?",
+    "top_k":4,
+    "include_context":true
+  }'
+```
+
+La secuencia esperada es: `event: stage`, `event: retrieval`, múltiples `event: delta` y finalmente `event: complete`.
+
+### Otras preguntas útiles para probar el corpus
+
+- `¿Qué significa el código 54 y debo reintentar con la misma tarjeta?`
+- `¿Qué diferencia hay entre fondos insuficientes (51) y exceder el límite (61)?`
+- `¿Qué debería revisar si recibo código 96 en una ventana de pocos minutos?`
+- `¿Por qué una autorización aprobada puede terminar con captura fallida?`
+- `¿Cómo debería tratar webhooks tardíos sin crear un segundo pago?`
+- `¿Qué evidencia hay de reglas de velocity o antifraude?`
+- `¿Qué debo revisar ante errores de tokenización?`
+- `¿Cómo manejar un reembolso que sigue pendiente?`
+- `¿Cuándo tiene sentido hacer rerouting por adquirente?`
+- `¿Qué diferencia hay entre un timeout 3DS y un código 91 del emisor?`
+
 ---
 
 ## 13. Activar generación con OpenAI
@@ -500,13 +542,20 @@ OPENAI_API_KEY=<su-api-key>
 OPENAI_MODEL=gpt-5-mini
 ```
 
-Luego reconstruya/reinicie la API:
+Después de modificar `.env`, **recree `api`**; `docker compose restart api` no cambia las variables con las que fue creado el contenedor:
 
 ```bash
-docker compose -f infrastructure/docker-compose.yml up -d --build api frontend
+docker compose --env-file .env -f infrastructure/docker-compose.yml up -d --no-deps --force-recreate api
 ```
 
-Como `api` y `dataset-loader` comparten la misma definición de build e imagen, Docker reutiliza las mismas capas del backend. Si solo cambió configuración por variables de entorno y no el código/dependencias, puede omitirse `--build`.
+Verifique el contenedor real que atiende tráfico:
+
+```bash
+docker compose -f infrastructure/docker-compose.yml exec api \
+  python -c "import os; print(os.getenv('GENERATION_PROVIDER')); print(os.getenv('OPENAI_MODEL')); print(bool(os.getenv('OPENAI_API_KEY')))"
+```
+
+También puede consultar `/health/ready`; la UI muestra el mismo proveedor y modelo reportados por ese endpoint. No use el resultado de `docker compose run --rm api ...` como prueba del estado de `api-1`: ese comando crea un contenedor temporal con la configuración actual.
 
 La etapa de retrieval no cambia: el LLM recibe únicamente el contexto GraphRAG ya recuperado.
 
@@ -553,7 +602,7 @@ Estas verificaciones están pensadas para ejecutarse antes de modificar o integr
 El entregable fue validado con Python 3.13 antes de generar el ZIP:
 
 - compilación sintáctica de `src`, `frontend`, `datasets` y `tests`: **OK**;
-- suite unitaria: **10/10 tests OK**;
+- suite unitaria: **19/19 tests OK**;
 - parsing de los JSON de datasets y ejemplos request/response: **OK**;
 - parsing del `docker-compose.yml`: **OK**;
 - consistencia referencial del dataset de ejemplo: **OK**;
@@ -595,6 +644,9 @@ Ese patrón es especialmente útil en payment processing porque las explicacione
 ## 18. Referencias técnicas oficiales
 
 - Neo4j GraphRAG for Python: https://neo4j.com/docs/neo4j-graphrag-python/current/
+- Streamlit `st.container` / autoscroll: https://docs.streamlit.io/develop/api-reference/layout/st.container
+- Streamlit `st.write_stream`: https://docs.streamlit.io/develop/api-reference/write-magic/st.write_stream
+- OpenAI Python streaming: https://github.com/openai/openai-python#streaming-responses
 - Guía RAG y retrievers de Neo4j: https://neo4j.com/docs/neo4j-graphrag-python/current/user_guide_rag.html
 - Neo4j Docker: https://neo4j.com/docs/operations-manual/current/docker/introduction/
 - Paquete neo4j-graphrag 1.19.0: https://pypi.org/project/neo4j-graphrag/

@@ -46,5 +46,8 @@ def trace_rows(trace: dict[str, Any] | None) -> list[tuple[str, str]]:
         ("Índice vectorial", str(trace.get("vector_index", "—"))),
         ("Índice full-text", str(trace.get("fulltext_index", "—"))),
         ("Expansión del grafo", str(trace.get("graph_expansion", "—"))),
+        ("Ranker híbrido", str(trace.get("ranker", "—"))),
+        ("Peso vectorial", str(trace.get("vector_weight", "—"))),
+        ("Search ratio", str(trace.get("effective_search_ratio", "—"))),
         ("Contextos retornados", str(trace.get("returned_contexts", 0))),
     ]

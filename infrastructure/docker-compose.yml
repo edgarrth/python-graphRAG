@@ -1,7 +1,7 @@
 name: axiz-graphrag-payments-poc
 
 x-backend-image: &backend-image
-  image: axiz-graphrag-payments-poc-app:1.3.3
+  image: axiz-graphrag-payments-poc-app:1.4.0
   build:
     context: ..
     dockerfile: infrastructure/app.Dockerfile
@@ -14,6 +14,9 @@ x-backend-environment: &backend-environment
   EMBEDDING_MODEL: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
   VECTOR_INDEX_NAME: knowledge_embedding
   FULLTEXT_INDEX_NAME: knowledge_fulltext
+  HYBRID_RANKER: ${HYBRID_RANKER:-linear}
+  HYBRID_ALPHA: ${HYBRID_ALPHA:-0.35}
+  EFFECTIVE_SEARCH_RATIO: ${EFFECTIVE_SEARCH_RATIO:-3}
   HF_HOME: /root/.cache/huggingface
 
 services:

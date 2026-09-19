@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Iterator
+from time import perf_counter
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from neo4j import Driver
@@ -32,34 +34,119 @@ class GraphRagService:
         self._retriever = retriever
         self._generator = generator
 
-    def query(self, request: GraphRagQueryRequest) -> GraphRagQueryResponse:
+    def _resolve_top_k(self, request: GraphRagQueryRequest) -> int:
         top_k = request.top_k or self._settings.default_top_k
-        top_k = min(top_k, self._settings.max_top_k)
+        return min(top_k, self._settings.max_top_k)
+
+    def _get_retriever(self) -> GraphAwareRetriever:
         retriever = self._retriever
         if retriever is None:
             from pe.axiz.graphrag_payments.application.retrieval import GraphAwareRetriever
 
             retriever = GraphAwareRetriever(self._driver, self._settings)
             self._retriever = retriever
-        retrieval = retriever.search(request.question, top_k)
+        return retriever
+
+    def _trace(self, top_k: int, returned_contexts: int) -> RetrievalTrace:
+        return RetrievalTrace(
+            retriever="HybridCypherRetriever",
+            vector_index=self._settings.vector_index_name,
+            fulltext_index=self._settings.fulltext_index_name,
+            graph_expansion="KnowledgeChunk -> ReasonCode <- Payment -> Merchant / Acquirer",
+            top_k=top_k,
+            returned_contexts=returned_contexts,
+            ranker=self._settings.hybrid_ranker,
+            vector_weight=(
+                self._settings.hybrid_alpha if self._settings.hybrid_ranker == "linear" else None
+            ),
+            effective_search_ratio=self._settings.effective_search_ratio,
+        )
+
+    def query(self, request: GraphRagQueryRequest) -> GraphRagQueryResponse:
+        top_k = self._resolve_top_k(request)
+        retrieval = self._get_retriever().search(request.question, top_k)
         answer = self._generator.generate(request.question, retrieval.contexts)
         contexts = retrieval.contexts if request.include_context else []
         return GraphRagQueryResponse(
             question=request.question,
             answer=answer,
             generation_provider=self._settings.generation_provider,
-            contexts=contexts,
-            trace=RetrievalTrace(
-                retriever="HybridCypherRetriever",
-                vector_index=self._settings.vector_index_name,
-                fulltext_index=self._settings.fulltext_index_name,
-                graph_expansion=(
-                    "KnowledgeChunk -> ReasonCode <- Payment -> Merchant / Acquirer"
-                ),
-                top_k=top_k,
-                returned_contexts=len(retrieval.contexts),
+            generation_model=(
+                self._settings.openai_model if self._settings.generation_provider == "openai" else None
             ),
+            contexts=contexts,
+            trace=self._trace(top_k, len(retrieval.contexts)),
         )
+
+    def query_stream(self, request: GraphRagQueryRequest) -> Iterator[dict[str, Any]]:
+        """Yield typed events for the SSE transport."""
+        started = perf_counter()
+        top_k = self._resolve_top_k(request)
+        yield {
+            "event": "stage",
+            "data": {"stage": "retrieval", "message": "Recuperando contexto GraphRAG…"},
+        }
+
+        retrieval_started = perf_counter()
+        retrieval = self._get_retriever().search(request.question, top_k)
+        retrieval_ms = round((perf_counter() - retrieval_started) * 1000, 1)
+        trace = self._trace(top_k, len(retrieval.contexts))
+        yield {
+            "event": "retrieval",
+            "data": {
+                "message": "Contexto híbrido recuperado y grafo expandido.",
+                "retrieval_ms": retrieval_ms,
+                "trace": trace.model_dump(mode="json"),
+                "contexts": (
+                    [item.model_dump(mode="json") for item in retrieval.contexts]
+                    if request.include_context
+                    else []
+                ),
+            },
+        }
+
+        yield {
+            "event": "stage",
+            "data": {
+                "stage": "generation",
+                "message": (
+                    f"Generando respuesta con {self._settings.openai_model}…"
+                    if self._settings.generation_provider == "openai"
+                    else "Generando respuesta determinística…"
+                ),
+            },
+        }
+
+        answer_parts: list[str] = []
+        generation_started = perf_counter()
+        for delta in self._generator.stream(request.question, retrieval.contexts):
+            answer_parts.append(delta)
+            yield {"event": "delta", "data": {"delta": delta}}
+
+        answer = "".join(answer_parts).strip()
+        generation_ms = round((perf_counter() - generation_started) * 1000, 1)
+        total_ms = round((perf_counter() - started) * 1000, 1)
+        response = GraphRagQueryResponse(
+            question=request.question,
+            answer=answer,
+            generation_provider=self._settings.generation_provider,
+            generation_model=(
+                self._settings.openai_model if self._settings.generation_provider == "openai" else None
+            ),
+            contexts=retrieval.contexts if request.include_context else [],
+            trace=trace,
+        )
+        yield {
+            "event": "complete",
+            "data": {
+                **response.model_dump(mode="json"),
+                "timings": {
+                    "retrieval_ms": retrieval_ms,
+                    "generation_ms": generation_ms,
+                    "total_ms": total_ms,
+                },
+            },
+        }
 
     def schema(self) -> SchemaResponse:
         labels, _, _ = self._driver.execute_query(

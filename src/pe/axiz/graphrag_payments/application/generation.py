@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 
 from pe.axiz.graphrag_payments.domain.models import ContextItem
 from pe.axiz.graphrag_payments.settings import Settings
@@ -12,11 +13,24 @@ class AnswerGenerator(ABC):
     def generate(self, question: str, contexts: list[ContextItem]) -> str:
         raise NotImplementedError
 
+    def stream(self, question: str, contexts: list[ContextItem]) -> Iterator[str]:
+        """Stream answer deltas.
+
+        Generators that do not expose native token streaming still participate in
+        the SSE contract by chunking their grounded final answer.
+        """
+        answer = self.generate(question, contexts)
+        words = answer.split(" ")
+        for index, word in enumerate(words):
+            suffix = " " if index < len(words) - 1 else ""
+            yield word + suffix
+
 
 class DeterministicGroundedGenerator(AnswerGenerator):
     """Credential-free synthesis used as the default runnable PoC mode."""
 
     def generate(self, question: str, contexts: list[ContextItem]) -> str:
+        del question
         if not contexts:
             return "No se encontró contexto suficiente en el grafo para responder la consulta."
 
@@ -58,30 +72,46 @@ class OpenAIGroundedGenerator(AnswerGenerator):
         self._client = OpenAI(api_key=settings.openai_api_key)
         self._model = settings.openai_model
 
-    def generate(self, question: str, contexts: list[ContextItem]) -> str:
+    @staticmethod
+    def _input(question: str, contexts: list[ContextItem]) -> list[dict[str, str]]:
         serialized_context = json.dumps(
             [context.model_dump() for context in contexts],
             ensure_ascii=False,
             indent=2,
         )
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "Eres un asistente de operaciones de pagos. Responde en español y únicamente "
+                    "con la evidencia GraphRAG entregada. Sintetiza los contextos relevantes en vez "
+                    "de copiar uno solo. Si la evidencia no alcanza, dilo explícitamente. "
+                    "No inventes causas, métricas ni acciones."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Pregunta:\n{question}\n\nContexto GraphRAG:\n{serialized_context}",
+            },
+        ]
+
+    def generate(self, question: str, contexts: list[ContextItem]) -> str:
         response = self._client.responses.create(
             model=self._model,
-            input=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Eres un asistente de operaciones de pagos. Responde únicamente con la "
-                        "evidencia GraphRAG entregada. Si la evidencia no alcanza, dilo explícitamente. "
-                        "No inventes causas, métricas ni acciones."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": f"Pregunta:\n{question}\n\nContexto GraphRAG:\n{serialized_context}",
-                },
-            ],
+            input=self._input(question, contexts),
         )
         return response.output_text.strip()
+
+    def stream(self, question: str, contexts: list[ContextItem]) -> Iterator[str]:
+        """Use native OpenAI Responses API streaming for the SSE endpoint."""
+        stream = self._client.responses.create(
+            model=self._model,
+            input=self._input(question, contexts),
+            stream=True,
+        )
+        for event in stream:
+            if event.type == "response.output_text.delta" and event.delta:
+                yield event.delta
 
 
 def build_generator(settings: Settings) -> AnswerGenerator:

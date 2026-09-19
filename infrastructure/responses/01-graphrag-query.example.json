@@ -8,7 +8,12 @@
       "title": "Rechazo 05 - Do not honor",
       "text": "El código 05 es un rechazo genérico emitido por el emisor...",
       "score": 0.9,
-      "reason_codes": [{"code": "05", "description": "Do not honor / rechazo genérico del emisor"}],
+      "reason_codes": [
+        {
+          "code": "05",
+          "description": "Do not honor / rechazo genérico del emisor"
+        }
+      ],
       "related_payments": []
     }
   ],
@@ -18,6 +23,10 @@
     "fulltext_index": "knowledge_fulltext",
     "graph_expansion": "KnowledgeChunk -> ReasonCode <- Payment -> Merchant / Acquirer",
     "top_k": 4,
-    "returned_contexts": 1
-  }
+    "returned_contexts": 1,
+    "ranker": "linear",
+    "vector_weight": 0.35,
+    "effective_search_ratio": 3
+  },
+  "generation_model": null
 }

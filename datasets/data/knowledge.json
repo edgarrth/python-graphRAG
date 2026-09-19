@@ -34,5 +34,59 @@
     "title": "Ruteo y latencia de adquirentes",
     "text": "El ruteo puede considerar disponibilidad, latencia, costo y capacidad por adquirente. Para una incidencia operativa, comparar la tasa de éxito y la latencia por ruta en la misma ventana de tiempo. El rerouting no debe ocultar rechazos legítimos del emisor ni romper reglas de idempotencia.",
     "reason_codes": ["91", "3DS_TIMEOUT"]
+  },
+  {
+    "chunk_id": "KB-DECLINE-54",
+    "title": "Rechazo 54 - Tarjeta expirada",
+    "text": "El código 54 indica que la tarjeta está expirada. No debe tratarse como una falla del adquirente. El flujo debe solicitar al cliente actualizar el medio de pago y evitar retries automáticos con la misma credencial vencida.",
+    "reason_codes": ["54"]
+  },
+  {
+    "chunk_id": "KB-DECLINE-57",
+    "title": "Rechazo 57 - Transacción no permitida",
+    "text": "El código 57 indica que el emisor no permite el tipo de transacción para esa tarjeta o cuenta. Operaciones debe revisar el tipo de operación, canal y restricciones del producto; cambiar de adquirente normalmente no elimina una restricción impuesta por el emisor.",
+    "reason_codes": ["57"]
+  },
+  {
+    "chunk_id": "KB-DECLINE-61",
+    "title": "Rechazo 61 - Excede límite de monto",
+    "text": "El código 61 indica que el monto excede un límite configurado por el emisor o la cuenta. Conviene distinguirlo de fondos insuficientes y evitar fraccionar cargos automáticamente para eludir controles. El cliente puede intentar otro medio de pago o revisar sus límites con el emisor.",
+    "reason_codes": ["61"]
+  },
+  {
+    "chunk_id": "KB-SYSTEM-96",
+    "title": "Código 96 - Mal funcionamiento del sistema",
+    "text": "El código 96 suele representar un error técnico genérico en la cadena de autorización. Debe correlacionarse con logs, latencia, adquirente, switch y ventana temporal. Los retries deben aplicar backoff y límites para evitar amplificar una degradación aguas abajo.",
+    "reason_codes": ["96"]
+  },
+  {
+    "chunk_id": "KB-FRAUD-VELOCITY",
+    "title": "Reglas de velocity y prevención de fraude",
+    "text": "Los controles de velocity limitan intentos por tarjeta, cliente, comercio, dispositivo o ventana temporal. Cuando una regla antifraude bloquea pagos, operaciones debe identificar la dimensión que disparó el control y evitar retries automáticos que incrementen el riesgo o la tasa de rechazo.",
+    "reason_codes": ["FRAUD_VELOCITY"]
+  },
+  {
+    "chunk_id": "KB-CAPTURE-FAILURE",
+    "title": "Autorización aprobada pero captura fallida",
+    "text": "Una captura puede fallar después de una autorización aprobada. El sistema debe conservar la referencia de autorización, aplicar idempotencia en la captura y distinguir entre reintentar la captura existente y crear una nueva autorización. La conciliación debe identificar autorizaciones sin captura.",
+    "reason_codes": ["CAPTURE_FAILED"]
+  },
+  {
+    "chunk_id": "KB-WEBHOOK-DELAY",
+    "title": "Webhooks tardíos y estados eventualmente consistentes",
+    "text": "Un webhook tardío puede hacer que el canal vea un estado temporal diferente al estado final del procesador. Los consumidores deben ser idempotentes, tolerar eventos fuera de orden y consultar el estado autoritativo cuando exista ambigüedad. No se debe crear un segundo pago solo por no haber recibido aún el webhook.",
+    "reason_codes": ["WEBHOOK_DELAY", "DUPLICATE_RISK"]
+  },
+  {
+    "chunk_id": "KB-REFUND-PENDING",
+    "title": "Reembolso pendiente y conciliación",
+    "text": "Un reembolso puede permanecer pendiente mientras el adquirente o la red procesa la devolución. Operaciones debe correlacionar el identificador del pago original, el refund, la respuesta del adquirente y la conciliación antes de emitir una segunda devolución. La idempotencia también aplica a refunds.",
+    "reason_codes": ["REFUND_PENDING"]
+  },
+  {
+    "chunk_id": "KB-TOKENIZATION",
+    "title": "Errores de tokenización del medio de pago",
+    "text": "Los errores de tokenización ocurren antes o durante la preparación de credenciales para el pago. Deben diferenciarse de un rechazo del emisor. Revisar vigencia del token, asociación con el comercio, proveedor de vault y mapeo del token al PAN o credencial subyacente.",
+    "reason_codes": ["TOKENIZATION_ERROR"]
   }
 ]

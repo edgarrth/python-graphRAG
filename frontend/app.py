@@ -9,7 +9,6 @@ from uuid import uuid4
 
 import httpx
 import streamlit as st
-import streamlit.components.v1 as components
 from api_client import ApiClient
 from ui_helpers import EXAMPLE_QUESTIONS, conversation_group, conversation_title, trace_rows
 
@@ -35,12 +34,12 @@ for key, default in {
     "conversations": {},
     "current_conversation_id": None,
     "pending_question": None,
+    "pending_request": None,
     "show_trace": True,
     "show_query_progress": True,
     "show_evidence": True,
     "top_k": 4,
     "left_sidebar_collapsed": False,
-    "scroll_to_top": True,
 }.items():
     st.session_state.setdefault(key, default)
 
@@ -125,17 +124,43 @@ a {{ color:var(--axiz-accent); }}
   padding:.78rem .72rem .9rem;
 }}
 .st-key-left_nav_panel {{
-  position:sticky;
-  top:.85rem;
+  position:sticky !important;
+  top:.85rem !important;
   max-height:calc(100vh - 1.7rem);
   overflow-y:auto;
 }}
 .st-key-right_settings_panel {{
-  position:sticky;
-  top:.85rem;
+  position:sticky !important;
+  top:.85rem !important;
+  height:calc(100vh - 1.7rem);
   max-height:calc(100vh - 1.7rem);
   overflow-y:auto;
 }}
+.st-key-left_nav_panel {{
+  height:calc(100vh - 1.7rem);
+}}
+
+/* Only the conversation scrolls. Navigation and settings stay in place. */
+.st-key-chat_scroll_panel {{
+  width:100%;
+  max-width:{CHAT_MAX_WIDTH}px;
+  margin-inline:auto;
+  min-height:420px;
+  height:calc(100vh - 235px) !important;
+  max-height:760px;
+  overflow-y:auto !important;
+  overscroll-behavior:contain;
+  scrollbar-gutter:stable;
+  padding:.15rem .35rem .65rem .05rem;
+  border:0 !important;
+  background:transparent !important;
+}}
+.st-key-chat_scroll_panel::-webkit-scrollbar {{ width:8px; }}
+.st-key-chat_scroll_panel::-webkit-scrollbar-thumb {{
+  background:#1c3547;
+  border-radius:999px;
+}}
+.st-key-chat_scroll_panel::-webkit-scrollbar-track {{ background:transparent; }}
 
 .panel-header {{
   display:flex;
@@ -520,42 +545,6 @@ a {{ color:var(--axiz-accent); }}
 )
 
 
-def reset_scroll_to_top_if_requested() -> None:
-    """Reset the main Streamlit scroll container after initial/new-chat render."""
-    if not st.session_state.get("scroll_to_top", False):
-        return
-
-    components.html(
-        """
-        <script>
-        (() => {
-          const reset = () => {
-            const doc = window.parent.document;
-            const candidates = [
-              doc.querySelector('section[data-testid="stMain"]'),
-              doc.querySelector('[data-testid="stAppViewContainer"]'),
-              doc.scrollingElement
-            ];
-            for (const element of candidates) {
-              if (!element) continue;
-              element.scrollTop = 0;
-              if (typeof element.scrollTo === 'function') {
-                element.scrollTo({top: 0, left: 0, behavior: 'instant'});
-              }
-            }
-            try { window.parent.scrollTo({top: 0, left: 0, behavior: 'instant'}); } catch (_) {}
-          };
-          requestAnimationFrame(reset);
-          setTimeout(reset, 60);
-          setTimeout(reset, 220);
-        })();
-        </script>
-        """,
-        height=0,
-    )
-    st.session_state.scroll_to_top = False
-
-
 def new_conversation() -> str:
     conversation_id = str(uuid4())
     now = datetime.now(UTC)
@@ -567,7 +556,6 @@ def new_conversation() -> str:
         "messages": [],
     }
     st.session_state.current_conversation_id = conversation_id
-    st.session_state.scroll_to_top = True
     return conversation_id
 
 
@@ -615,7 +603,7 @@ def render_brand_header() -> None:
     )
 
 
-def render_left_navigation(service_ready: bool) -> None:
+def render_left_navigation(service_ready: bool, readiness: dict[str, Any]) -> None:
     with st.container(key="left_nav_panel"):
         head_left, head_right = st.columns([0.78, 0.22], vertical_alignment="center")
         with head_left:
@@ -640,9 +628,17 @@ def render_left_navigation(service_ready: bool) -> None:
             "<span class='tech-pill'>Vector</span>"
             "<span class='tech-pill'>Full-text</span>"
             "<span class='tech-pill'>Graph</span>"
+            "<span class='tech-pill'>SSE</span>"
             "</div>",
             unsafe_allow_html=True,
         )
+        provider = str(readiness.get("generation_provider", "unknown"))
+        model = str(readiness.get("generation_model", "—"))
+        key_configured = bool(readiness.get("openai_key_configured", False))
+        runtime = f"OpenAI · {model}" if provider == "openai" else "Deterministic"
+        if provider == "openai" and not key_configured:
+            runtime += " · API key ausente"
+        st.caption(f"Generación activa: **{runtime}**")
 
         if st.button("＋ Nuevo chat", type="primary", width="stretch"):
             new_conversation()
@@ -767,10 +763,15 @@ def render_right_settings() -> None:
         )
 
 
-def render_topbar(conversation: dict[str, Any], ready: bool) -> None:
+def render_topbar(
+    conversation: dict[str, Any], ready: bool, readiness: dict[str, Any]
+) -> None:
     title = escape(conversation["title"] or "Nueva conversación")
     dot_class = "axiz-dot" if ready else "axiz-dot offline"
     status = "API y Neo4j disponibles" if ready else "API / Neo4j no disponible"
+    provider = str(readiness.get("generation_provider", "unknown"))
+    model = str(readiness.get("generation_model", "—"))
+    generation_chip = f"OpenAI · {escape(model)}" if provider == "openai" else "Deterministic"
     st.markdown(
         f"""
         <div class="axiz-topbar">
@@ -781,7 +782,8 @@ def render_topbar(conversation: dict[str, Any], ready: bool) -> None:
           <div class="axiz-chips">
             <span class="axiz-chip">GraphRAG</span>
             <span class="axiz-chip">Hybrid retrieval</span>
-            <span class="axiz-chip">Neo4j</span>
+            <span class="axiz-chip">SSE</span>
+            <span class="axiz-chip">{generation_chip}</span>
           </div>
         </div>
         """,
@@ -827,6 +829,14 @@ def render_assistant_payload(payload: dict[str, Any]) -> None:
     if not st.session_state.show_trace and not st.session_state.show_evidence:
         return
     with st.expander("Actividad técnica de GraphRAG", expanded=False):
+        timings = payload.get("timings") or {}
+        if timings:
+            st.caption(
+                "SSE · retrieval "
+                f"{timings.get('retrieval_ms', '—')} ms · generación "
+                f"{timings.get('generation_ms', '—')} ms · total "
+                f"{timings.get('total_ms', '—')} ms"
+            )
         if st.session_state.show_trace and st.session_state.show_evidence:
             trace_tab, evidence_tab = st.tabs(["Trazabilidad", "Evidencia recuperada"])
             with trace_tab:
@@ -878,6 +888,103 @@ def render_empty_state() -> None:
                 st.session_state.pending_question = question
 
 
+
+def render_streaming_assistant(client: ApiClient, question: str) -> None:
+    """Render one pending GraphRAG request using the API SSE stream."""
+    with st.chat_message("assistant", avatar=APP_ICON):
+        progress = None
+        stream_state: dict[str, Any] = {"payload": None}
+
+        if st.session_state.show_query_progress:
+            progress = st.status("Recuperando contexto GraphRAG…", expanded=False)
+
+        def text_deltas():
+            for message in client.query_stream(question, int(st.session_state.top_k)):
+                event = message.get("event")
+                data = message.get("data") or {}
+
+                if event == "stage":
+                    if progress is not None:
+                        progress.update(label=str(data.get("message", "Procesando…")))
+                elif event == "retrieval":
+                    if progress is not None:
+                        retrieval_ms = data.get("retrieval_ms", "—")
+                        progress.write(f"Retrieval híbrido + expansión del grafo: {retrieval_ms} ms")
+                elif event == "delta":
+                    delta = str(data.get("delta", ""))
+                    if delta:
+                        yield delta
+                elif event == "complete":
+                    stream_state["payload"] = data
+                    if progress is not None:
+                        timings = data.get("timings") or {}
+                        total_ms = timings.get("total_ms", "—")
+                        progress.update(
+                            label=f"Respuesta completada · {total_ms} ms",
+                            state="complete",
+                            expanded=False,
+                        )
+                elif event == "error":
+                    raise RuntimeError(
+                        str(data.get("detail") or data.get("message") or "SSE error")
+                    )
+
+        try:
+            answer = st.write_stream(text_deltas(), cursor="▌")
+            if not isinstance(answer, str) or not answer.strip():
+                raise RuntimeError("El stream SSE terminó sin contenido de respuesta.")
+
+            payload = stream_state.get("payload")
+            if not isinstance(payload, dict):
+                payload = {
+                    "answer": answer,
+                    "generation_provider": "unknown",
+                    "contexts": [],
+                    "trace": {},
+                }
+            render_assistant_payload(payload)
+            add_message("assistant", answer.strip(), payload)
+        except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+            error_message = (
+                "No fue posible completar la consulta GraphRAG por streaming. "
+                "Verifica el estado de `api`, Neo4j y la configuración del proveedor de generación."
+            )
+            if progress is not None:
+                progress.update(label="Consulta GraphRAG fallida", state="error", expanded=False)
+            st.error(error_message)
+            st.caption(str(exc))
+            add_message("assistant", error_message)
+        finally:
+            st.session_state.pending_request = None
+
+    st.rerun()
+
+
+def render_chat_area(
+    client: ApiClient,
+    conversation: dict[str, Any],
+    service_ready: bool,
+    readiness: dict[str, Any],
+) -> None:
+    render_topbar(conversation, service_ready, readiness)
+    with st.container(
+        height=620,
+        border=False,
+        key="chat_scroll_panel",
+        autoscroll=True,
+    ):
+        messages = conversation["messages"]
+        pending_request = st.session_state.get("pending_request")
+        if messages:
+            for message in messages:
+                render_message(message)
+        elif not pending_request:
+            render_empty_state()
+
+        if pending_request:
+            render_streaming_assistant(client, str(pending_request))
+
+
 if not st.session_state.conversations:
     new_conversation()
 
@@ -894,72 +1001,33 @@ conversation = current_conversation()
 
 if st.session_state.left_sidebar_collapsed:
     center_col, right_col = st.columns([1.0, 0.29], gap="large")
+    # Render the fixed settings rail before a potentially long SSE request.
+    with right_col:
+        render_right_settings()
     with center_col:
         with st.container(key="left_reopen_row"):
             if st.button("☰", key="open-left", help="Mostrar historial"):
                 st.session_state.left_sidebar_collapsed = False
                 st.rerun()
-        render_topbar(conversation, service_ready)
-        messages = conversation["messages"]
-        if messages:
-            for message in messages:
-                render_message(message)
-        else:
-            render_empty_state()
-    with right_col:
-        render_right_settings()
+        render_chat_area(client, conversation, service_ready, readiness_payload)
 else:
     left_col, center_col, right_col = st.columns([0.29, 0.94, 0.29], gap="large")
+    # Sidecards are rendered first and the conversation is the only scrolling surface.
     with left_col:
-        render_left_navigation(service_ready)
-    with center_col:
-        render_topbar(conversation, service_ready)
-        messages = conversation["messages"]
-        if messages:
-            for message in messages:
-                render_message(message)
-        else:
-            render_empty_state()
+        render_left_navigation(service_ready, readiness_payload)
     with right_col:
         render_right_settings()
+    with center_col:
+        render_chat_area(client, conversation, service_ready, readiness_payload)
 
-pending = st.session_state.pop("pending_question", None)
-question = st.chat_input("Pregunta sobre rechazos, incidencias o controles de payment processing")
-reset_scroll_to_top_if_requested()
-question = question or pending
+pending_example = st.session_state.pop("pending_question", None)
+question = st.chat_input(
+    "Pregunta sobre rechazos, incidencias o controles de payment processing",
+    disabled=bool(st.session_state.get("pending_request")),
+)
+question = question or pending_example
 
-if question:
+if question and not st.session_state.get("pending_request"):
     add_message("user", question)
-    with st.chat_message("user"):
-        st.markdown(question)
-
-    with st.chat_message("assistant", avatar=APP_ICON):
-        try:
-            if st.session_state.show_query_progress:
-                with st.status("Analizando la pregunta con GraphRAG…", expanded=True) as status:
-                    status.write("Buscando conocimiento por similitud semántica y texto completo…")
-                    payload = client.query(question, int(st.session_state.top_k))
-                    status.write("Expandiendo entidades y relaciones conectadas en Neo4j…")
-                    status.update(
-                        label="Contexto GraphRAG recuperado",
-                        state="complete",
-                        expanded=False,
-                    )
-            else:
-                with st.spinner("Consultando GraphRAG…"):
-                    payload = client.query(question, int(st.session_state.top_k))
-
-            answer = payload["answer"]
-            st.markdown(answer)
-            render_assistant_payload(payload)
-            add_message("assistant", answer, payload)
-        except httpx.HTTPError as exc:
-            error_message = (
-                "No fue posible consultar la API GraphRAG. "
-                "Verifica que `api`, `dataset-loader` y Neo4j estén saludables."
-            )
-            st.error(error_message)
-            st.caption(str(exc))
-            add_message("assistant", error_message)
-
+    st.session_state.pending_request = question
     st.rerun()

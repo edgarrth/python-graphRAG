@@ -31,6 +31,15 @@ REASON_DESCRIPTIONS = {
     "91": "Emisor o switch no disponible",
     "3DS_TIMEOUT": "Timeout durante autenticación 3DS",
     "DUPLICATE_RISK": "Riesgo de duplicidad por retry sin idempotencia",
+    "54": "Tarjeta expirada",
+    "57": "Transacción no permitida",
+    "61": "Excede límite de monto",
+    "96": "Mal funcionamiento del sistema",
+    "FRAUD_VELOCITY": "Bloqueo por regla de velocity o fraude",
+    "CAPTURE_FAILED": "Captura fallida luego de autorización",
+    "WEBHOOK_DELAY": "Webhook tardío o estado eventualmente consistente",
+    "REFUND_PENDING": "Reembolso pendiente",
+    "TOKENIZATION_ERROR": "Error de tokenización del medio de pago",
 }
 
 

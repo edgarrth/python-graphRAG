@@ -1,0 +1,8 @@
+curl -N -X POST http://localhost:8000/api/v1/graphrag/query/stream \
+  -H 'Accept: text/event-stream' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "question":"¿Cómo evito cobros duplicados cuando el cliente reintenta por un timeout?",
+    "top_k":4,
+    "include_context":true
+  }'

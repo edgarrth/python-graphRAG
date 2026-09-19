@@ -42,12 +42,16 @@ class RetrievalTrace(BaseModel):
     graph_expansion: str
     top_k: int
     returned_contexts: int
+    ranker: str = "naive"
+    vector_weight: float | None = None
+    effective_search_ratio: int = 1
 
 
 class GraphRagQueryResponse(BaseModel):
     question: str
     answer: str
     generation_provider: Literal["deterministic", "openai"]
+    generation_model: str | None = None
     contexts: list[ContextItem] = Field(default_factory=list)
     trace: RetrievalTrace
 
