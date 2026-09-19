@@ -12,3 +12,7 @@ buttonRadius = "0.65rem"
 
 [server]
 headless = true
+
+[client]
+toolbarMode = "minimal"
+showSidebarNavigation = false

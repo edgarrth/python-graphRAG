@@ -18,7 +18,6 @@ APP_ICON_PATH = ASSET_DIR / "axiz-agent-icon.png"
 AXIZ_LOGO_PATH = ASSET_DIR / "axiz-logo@2x.png"
 FAVICON_PATH = ASSET_DIR / "favicon.png"
 
-
 APP_ICON = str(APP_ICON_PATH)
 AXIZ_LOGO = str(AXIZ_LOGO_PATH)
 FAVICON = str(FAVICON_PATH)
@@ -27,13 +26,31 @@ st.set_page_config(
     page_title="Axiz GraphRAG Payments",
     page_icon=FAVICON,
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
+
+for key, default in {
+    "conversations": {},
+    "current_conversation_id": None,
+    "pending_question": None,
+    "show_trace": True,
+    "show_query_progress": True,
+    "show_evidence": True,
+    "top_k": 4,
+    "left_sidebar_collapsed": False,
+}.items():
+    st.session_state.setdefault(key, default)
+
+
+LEFT_COLLAPSED = bool(st.session_state.left_sidebar_collapsed)
+CHAT_MAX_WIDTH = 1040 if LEFT_COLLAPSED else 940
+INPUT_SHIFT_PX = -138 if LEFT_COLLAPSED else 0
+
 st.markdown(
-    """
+    f"""
 <style>
-:root {
+:root {{
   color-scheme: dark;
   --axiz-bg:#081018;
   --axiz-sidebar:#09141e;
@@ -47,107 +64,184 @@ st.markdown(
   --axiz-accent:#43c3ec;
   --axiz-accent-soft:#112b38;
   --axiz-success:#4bd8a0;
-}
+}}
 
 html, body, .stApp,
 [data-testid="stAppViewContainer"],
-[data-testid="stMain"] {
+[data-testid="stMain"] {{
   background:var(--axiz-bg) !important;
   color:var(--axiz-text);
-}
+}}
 
-html, body { color-scheme:dark; }
-.stApp {
+html, body {{ color-scheme:dark; }}
+.stApp {{
   font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-}
-[data-testid="stHeader"] {
-  background: transparent;
-  border: none;
-}
-[data-testid="stToolbar"],
+}}
+[data-testid="stHeader"] {{
+  background:transparent !important;
+  border-bottom:0 !important;
+}}
 [data-testid="stDecoration"],
 [data-testid="stMainMenu"],
 .stDeployButton,
-footer {
+footer {{
   display:none !important;
-}
+}}
+[data-testid="stToolbar"] {{ background:transparent !important; }}
 
-[data-testid="stSidebar"] {
-  min-width:286px;
-  max-width:286px;
-  background:var(--axiz-sidebar);
-  border-right:1px solid var(--axiz-line);
-}
-[data-testid="stSidebar"] * { color:var(--axiz-text); }
-[data-testid="stSidebar"] .stTextInput input {
-  background:#07121b;
-  border-color:#294154;
-  color:var(--axiz-text);
-}
-[data-testid="stSidebar"] .stButton button {
+/* The PoC owns its left navigation so collapse behaves like ChatGPT: the
+   panel truly disappears and the conversation gains horizontal space. */
+[data-testid="stSidebar"],
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"],
+[data-testid="stSidebarCollapseButton"] {{
+  display:none !important;
+}}
+
+[data-testid="stMainBlockContainer"],
+.block-container {{
+  width:100% !important;
+  max-width:1600px !important;
+  margin-inline:auto !important;
+  padding-top:.85rem !important;
+  padding-right:1.35rem !important;
+  padding-bottom:8.3rem !important;
+  padding-left:1.35rem !important;
+}}
+
+h1,h2,h3,h4 {{ color:#edf5fa !important; letter-spacing:-.015em; }}
+p,li,label,[data-testid="stCaptionContainer"] {{ color:#b7c8d4; }}
+a {{ color:var(--axiz-accent); }}
+
+/* Custom navigation and settings rails */
+.st-key-left_nav_panel,
+.st-key-right_settings_panel {{
+  background:linear-gradient(180deg,#0a1620 0%,#09131d 100%);
+  border:1px solid var(--axiz-line);
+  border-radius:16px;
+  box-shadow:0 16px 42px rgba(0,0,0,.18);
+  padding:.78rem .72rem .9rem;
+}}
+.st-key-left_nav_panel {{
+  position:sticky;
+  top:.85rem;
+  max-height:calc(100vh - 1.7rem);
+  overflow-y:auto;
+}}
+.st-key-right_settings_panel {{
+  position:sticky;
+  top:.85rem;
+  max-height:calc(100vh - 1.7rem);
+  overflow-y:auto;
+}}
+
+.panel-header {{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:.5rem;
+  margin:.05rem 0 .55rem;
+}}
+.panel-title {{
+  color:#dce8f0;
+  font-size:.76rem;
+  font-weight:760;
+  letter-spacing:.055em;
+  text-transform:uppercase;
+}}
+.panel-subtitle {{
+  color:#657e91;
+  font-size:.68rem;
+  line-height:1.35;
+  margin:-.2rem 0 .65rem;
+}}
+.sidebar-brand {{
+  color:#f0f7fb;
+  font-size:.78rem;
+  font-weight:720;
+  text-align:center;
+  margin:.08rem 0 .72rem;
+}}
+.session-group {{
+  color:#667f92 !important;
+  font-size:.66rem;
+  font-weight:750;
+  letter-spacing:.08em;
+  margin:.82rem 0 .22rem;
+  text-transform:uppercase;
+}}
+.session-caption {{
+  color:#587084 !important;
+  font-size:.63rem;
+  margin:-.4rem 0 .22rem .28rem;
+}}
+
+.st-key-left_nav_panel .stButton button,
+.st-key-right_settings_panel .stButton button {{
   border:1px solid #203747;
   border-radius:9px;
   background:#0e1d29;
   color:#cbd9e3;
-  text-align:left;
-}
-[data-testid="stSidebar"] .stButton button[kind="primary"] {
+}}
+.st-key-left_nav_panel .stButton button {{ text-align:left; }}
+.st-key-left_nav_panel .stButton button[kind="primary"] {{
   background:#14384a;
   border-color:#2c91b0;
   color:#8ce5ff;
-}
-[data-testid="stSidebar"] hr { border-color:var(--axiz-line); }
+}}
+.st-key-left_nav_panel .stTextInput input {{
+  background:#07121b;
+  border-color:#294154;
+  color:var(--axiz-text);
+}}
+.st-key-left_nav_panel hr,
+.st-key-right_settings_panel hr {{ border-color:var(--axiz-line); }}
 
-.block-container {
-  max-width:1040px;
-  padding-top:1.05rem;
-  padding-bottom:8.8rem;
-}
-h1,h2,h3,h4 { color:#edf5fa !important; letter-spacing:-.015em; }
-p,li,label,[data-testid="stCaptionContainer"] { color:#b7c8d4; }
-a { color:var(--axiz-accent); }
+/* A compact ChatGPT-like reopen affordance that belongs to the content area,
+   not to a permanent empty rail. */
+.st-key-left_reopen_row {{
+  margin:0 0 .3rem;
+}}
+.st-key-left_reopen_row .stButton > button {{
+  width:42px !important;
+  min-width:42px !important;
+  height:40px !important;
+  min-height:40px !important;
+  padding:0 !important;
+  border:1px solid var(--axiz-line-strong) !important;
+  border-radius:10px !important;
+  background:#0d1d29 !important;
+  color:#a9c2d2 !important;
+  box-shadow:0 7px 22px rgba(0,0,0,.2) !important;
+}}
+.st-key-left_reopen_row .stButton > button:hover {{
+  border-color:#3a9cbc !important;
+  background:#123044 !important;
+  color:#8ce5ff !important;
+}}
 
-.sidebar-brand {
-  color:#f0f7fb;
-  font-size:.82rem;
-  font-weight:720;
-  text-align:center;
-  margin:.12rem 0 .7rem;
-}
-.session-group {
-  color:#667f92 !important;
-  font-size:.68rem;
-  font-weight:750;
-  letter-spacing:.08em;
-  margin:.9rem 0 .25rem;
-  text-transform:uppercase;
-}
-.session-caption {
-  color:#587084 !important;
-  font-size:.65rem;
-  margin:-.42rem 0 .28rem .35rem;
-}
-
-.axiz-topbar {
+.axiz-topbar {{
   display:flex;
   justify-content:space-between;
-  gap:18px;
+  gap:16px;
   align-items:flex-end;
-  padding:.1rem 0 1rem;
+  width:100%;
+  max-width:{CHAT_MAX_WIDTH}px;
+  margin:0 auto 1rem;
+  padding:.12rem 0 .9rem;
   border-bottom:1px solid var(--axiz-line);
-  margin-bottom:1.25rem;
-}
-.axiz-topbar h1 {
+}}
+.axiz-topbar h1 {{
   margin:0;
-  font-size:1.16rem;
+  font-size:1.14rem;
   line-height:1.25;
-}
-.axiz-topbar .status {
-  margin-top:.35rem;
+}}
+.axiz-topbar .status {{
+  margin-top:.32rem;
   color:#728b9e;
-  font-size:.72rem;
-}
-.axiz-dot {
+  font-size:.71rem;
+}}
+.axiz-dot {{
   display:inline-block;
   width:7px;
   height:7px;
@@ -155,215 +249,236 @@ a { color:var(--axiz-accent); }
   background:var(--axiz-success);
   box-shadow:0 0 9px rgba(75,216,160,.45);
   margin-right:7px;
-}
-.axiz-dot.offline {
-  background:#748797;
-  box-shadow:none;
-}
-.axiz-chips {
+}}
+.axiz-dot.offline {{ background:#748797; box-shadow:none; }}
+.axiz-chips {{
   display:flex;
   gap:7px;
   flex-wrap:wrap;
   justify-content:flex-end;
-}
-.axiz-chip {
+}}
+.axiz-chip {{
   border:1px solid #243d4e;
   background:#0d1d29;
   color:#86a0b2;
   border-radius:999px;
-  padding:.35rem .62rem;
-  font:.68rem ui-monospace,SFMono-Regular,Consolas,monospace;
-}
+  padding:.32rem .58rem;
+  font:.66rem ui-monospace,SFMono-Regular,Consolas,monospace;
+}}
 
-.hero-spacer { height:8vh; }
-.hero-title {
+.hero-spacer {{ height:7vh; }}
+.hero-title {{
   color:#edf5fa;
-  font-size:1.78rem;
+  font-size:1.72rem;
   font-weight:780;
   letter-spacing:-.035em;
-  margin:.65rem 0 .35rem;
-}
-.hero-subtitle {
+  margin:.62rem 0 .32rem;
+}}
+.hero-subtitle {{
   color:#7890a3;
-  font-size:.94rem;
+  font-size:.92rem;
   line-height:1.55;
-  max-width:660px;
+  max-width:650px;
   margin:0 auto;
-}
-.suggestion-label {
+}}
+.suggestion-label {{
   color:#667f92;
-  font-size:.72rem;
+  font-size:.7rem;
   font-weight:750;
   letter-spacing:.06em;
-  margin:1.35rem 0 .45rem;
+  margin:1.25rem 0 .42rem;
   text-transform:uppercase;
-}
+}}
 
-/* ChatGPT-like conversation surface, retaining the reference project's dark Axiz theme. */
-[data-testid="stChatMessage"] {
+/* Return the conversation to the narrower visual rhythm of v1.2.0. When the
+   left navigation collapses, only a modest amount of extra width is granted. */
+[data-testid="stChatMessage"] {{
+  width:100%;
+  max-width:{CHAT_MAX_WIDTH}px;
+  margin-inline:auto;
   background:transparent;
   border:0;
-  padding:.45rem .15rem 1.05rem;
-}
-[data-testid="stChatMessage"] [data-testid="stChatMessageContent"] {
+  padding:.33rem .08rem .85rem;
+}}
+[data-testid="stChatMessage"] [data-testid="stChatMessageContent"] {{
   background:var(--axiz-card);
   border:1px solid var(--axiz-line);
   border-radius:13px;
-  padding:1rem 1.1rem;
+  padding:.95rem 1.05rem;
   box-shadow:0 14px 34px rgba(0,0,0,.14);
-}
+}}
 [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"])
-[data-testid="stChatMessageContent"] {
+[data-testid="stChatMessageContent"] {{
   background:var(--axiz-card-user);
   border-color:#323653;
   max-width:82%;
   margin-left:auto;
-}
+}}
 [data-testid="stChatMessageAvatarUser"],
-[data-testid="stChatMessageAvatarAssistant"] {
+[data-testid="stChatMessageAvatarAssistant"] {{
   border:1px solid #29445a;
   border-radius:9px;
   background:#0f2230;
-}
+}}
 
-[data-testid="stExpander"], [data-testid="stStatusWidget"] {
+[data-testid="stExpander"], [data-testid="stStatusWidget"] {{
   background:#0a1721;
   border:1px solid var(--axiz-line);
   border-radius:11px;
-}
-[data-testid="stDataFrame"] {
+}}
+[data-testid="stDataFrame"] {{
   border:1px solid var(--axiz-line);
   border-radius:10px;
   overflow:hidden;
-}
+}}
 .stButton>button[kind="primary"],
-.stFormSubmitButton>button[kind="primary"] {
+.stFormSubmitButton>button[kind="primary"] {{
   background:var(--axiz-accent);
   border-color:var(--axiz-accent);
   color:#041018;
   font-weight:750;
-}
-.stButton>button {
+}}
+.stButton>button {{
   border-radius:9px;
   border-color:#294154;
   background:#101e2a;
   color:#c6d7e3;
-}
-.stTextInput input,.stTextArea textarea {
+}}
+.stTextInput input,.stTextArea textarea {{
   background:#091721;
   border-color:#294154;
   color:#e4eef5;
-}
-.stTextInput input::placeholder,.stTextArea textarea::placeholder {
+}}
+.stTextInput input::placeholder,.stTextArea textarea::placeholder {{
   color:#60788a;
   opacity:1;
-}
-.stTextInput input:focus,.stTextArea textarea:focus {
+}}
+.stTextInput input:focus,.stTextArea textarea:focus {{
   border-color:#3a9cbc;
   box-shadow:0 0 0 1px #3a9cbc;
-}
+}}
+[data-testid="stMain"] .stButton > button {{ min-height:3rem; }}
 
-/* Suggested prompts should read like prompt cards, not generic form buttons. */
-[data-testid="stMain"] .stButton > button {
-  min-height:3.15rem;
-  text-align:left;
-}
-
-.trace-grid {
+.trace-grid {{
   display:grid;
-  grid-template-columns:165px 1fr;
-  gap:.38rem .8rem;
-  font-size:.86rem;
-}
-.trace-label { color:var(--axiz-muted); }
-.trace-value { overflow-wrap:anywhere; color:#c7d6df; }
-.tech-pill {
+  grid-template-columns:155px 1fr;
+  gap:.36rem .75rem;
+  font-size:.84rem;
+}}
+.trace-label {{ color:var(--axiz-muted); }}
+.trace-value {{ overflow-wrap:anywhere; color:#c7d6df; }}
+.tech-pill {{
   display:inline-block;
   border:1px solid #243d4e;
   background:#0d1d29;
   border-radius:999px;
-  padding:.22rem .55rem;
+  padding:.2rem .5rem;
   color:#86a0b2 !important;
-  font-size:.7rem;
-  margin:.15rem .25rem .15rem 0;
-}
+  font-size:.68rem;
+  margin:.12rem .18rem .12rem 0;
+}}
+.settings-note {{
+  border:1px solid #1f3545;
+  background:#0a1822;
+  border-radius:10px;
+  padding:.6rem .66rem;
+  color:#7991a3;
+  font-size:.71rem;
+  line-height:1.45;
+}}
 
-/* Streamlit renders chat_input inside a fixed bottom portal. */
+/* The fixed composer follows the central chat. Expanded navigation is
+   symmetrical with the right settings rail. When navigation is collapsed,
+   the composer shifts left to remain visually aligned with the enlarged chat. */
 [data-testid="stBottom"],
 [data-testid="stBottom"] > div,
 [data-testid="stBottomBlockContainer"],
 .stBottom,
-.stChatFloatingInputContainer {
+.stChatFloatingInputContainer {{
   background:transparent !important;
   border:0 !important;
   box-shadow:none !important;
-}
-[data-testid="stBottomBlockContainer"] {
+}}
+[data-testid="stBottomBlockContainer"] {{
+  width:calc(100% - 2rem) !important;
+  max-width:{CHAT_MAX_WIDTH}px !important;
+  margin-inline:auto !important;
+  transform:translateX({INPUT_SHIFT_PX}px);
   background:linear-gradient(180deg,rgba(8,16,24,0) 0%,rgba(8,16,24,.96) 28%,var(--axiz-bg) 100%) !important;
-  padding-top:1.25rem;
-  padding-bottom:1rem;
-}
-[data-testid="stChatInput"] {
+  padding-top:1rem !important;
+  padding-right:0 !important;
+  padding-bottom:.85rem !important;
+  padding-left:0 !important;
+}}
+[data-testid="stChatInput"] {{
   background:var(--axiz-card) !important;
   border:1px solid var(--axiz-line-strong) !important;
   border-radius:16px !important;
   box-shadow:0 16px 40px rgba(0,0,0,.32) !important;
   padding:.35rem .4rem .35rem .85rem;
-  transition:border-color .16s ease, box-shadow .16s ease;
-}
-[data-testid="stChatInput"]:focus-within {
+}}
+[data-testid="stChatInput"]:focus-within {{
   border-color:#3a9cbc !important;
   box-shadow:0 0 0 1px rgba(67,195,236,.24),0 18px 42px rgba(0,0,0,.34) !important;
-}
+}}
 [data-testid="stChatInput"] > div,
 [data-testid="stChatInput"] [data-baseweb="textarea"],
-[data-testid="stChatInput"] [data-baseweb="base-input"] {
+[data-testid="stChatInput"] [data-baseweb="base-input"] {{
   background:transparent !important;
   border:0 !important;
   box-shadow:none !important;
-}
-[data-testid="stChatInput"] textarea {
-  min-height:58px;
+}}
+[data-testid="stChatInput"] textarea {{
+  min-height:56px;
   background:transparent !important;
   border:0 !important;
   box-shadow:none !important;
   color:#e3edf4 !important;
   caret-color:var(--axiz-accent);
   resize:none;
-}
-[data-testid="stChatInput"] textarea::placeholder {
+}}
+[data-testid="stChatInput"] textarea::placeholder {{
   color:#61798b !important;
   opacity:1;
-}
-[data-testid="stChatInput"] button {
+}}
+[data-testid="stChatInput"] button {{
   border:1px solid #2d6f87 !important;
   border-radius:11px !important;
   background:#14384a !important;
   color:#8ce5ff !important;
-}
-[data-testid="stChatInput"] button:hover:not(:disabled) {
+}}
+[data-testid="stChatInput"] button:hover:not(:disabled) {{
   background:#19506a !important;
   border-color:#43c3ec !important;
-}
-[data-testid="stChatInput"] button:disabled {
+}}
+[data-testid="stChatInput"] button:disabled {{
   background:#11222d !important;
   border-color:#203847 !important;
   color:#607786 !important;
   opacity:1;
-}
+}}
 
-@media(max-width:800px) {
-  [data-testid="stSidebar"] { min-width:240px; max-width:240px; }
-  .axiz-topbar { align-items:flex-start; flex-direction:column; }
-  .axiz-chips { justify-content:flex-start; }
-  .block-container { padding-inline:1rem; padding-bottom:8rem; }
-  [data-testid="stBottomBlockContainer"] { padding-inline:.75rem; }
-  .trace-grid { grid-template-columns:1fr; }
-}
+@media(max-width:1180px) {{
+  [data-testid="stMainBlockContainer"], .block-container {{
+    padding-inline:.85rem !important;
+  }}
+  [data-testid="stBottomBlockContainer"] {{
+    transform:none !important;
+    max-width:min(900px,calc(100% - 1.25rem)) !important;
+  }}
+}}
+
+@media(max-width:900px) {{
+  .st-key-right_settings_panel {{ position:relative; top:0; max-height:none; }}
+  .axiz-topbar {{ align-items:flex-start; flex-direction:column; }}
+  .axiz-chips {{ justify-content:flex-start; }}
+  .trace-grid {{ grid-template-columns:1fr; }}
+}}
 </style>
     """,
     unsafe_allow_html=True,
 )
+
 
 def new_conversation() -> str:
     conversation_id = str(uuid4())
@@ -405,15 +520,171 @@ def delete_conversation(conversation_id: str) -> None:
         st.session_state.current_conversation_id = newest["id"]
 
 
+def clear_current_conversation() -> None:
+    conversation = current_conversation()
+    conversation["messages"] = []
+    conversation["title"] = "Nueva conversación"
+    conversation["updated_at"] = datetime.now(UTC)
+
+
 def render_brand_header() -> None:
-    left, center, right = st.columns([1, 7, 1])
+    left, center, right = st.columns([1, 6, 1])
     del left, right
     with center:
-        st.image(AXIZ_LOGO, width=210)
+        st.image(AXIZ_LOGO, width=170)
     st.markdown(
         "<div class='sidebar-brand'>GraphRAG Payments · Investigación de pagos</div>",
         unsafe_allow_html=True,
     )
+
+
+def render_left_navigation() -> None:
+    with st.container(key="left_nav_panel"):
+        head_left, head_right = st.columns([0.78, 0.22], vertical_alignment="center")
+        with head_left:
+            st.markdown("<div class='panel-title'>Conversaciones</div>", unsafe_allow_html=True)
+        with head_right:
+            if st.button("‹", key="collapse-left", help="Ocultar historial", width="stretch"):
+                st.session_state.left_sidebar_collapsed = True
+                st.rerun()
+
+        render_brand_header()
+
+        if st.button("＋ Nuevo chat", type="primary", width="stretch"):
+            new_conversation()
+            st.rerun()
+
+        search = st.text_input(
+            "Buscar chats",
+            placeholder="Buscar conversaciones",
+            label_visibility="collapsed",
+            key="chat-search",
+        )
+
+        ordered_conversations = sorted(
+            st.session_state.conversations.values(),
+            key=lambda item: item["updated_at"],
+            reverse=True,
+        )
+        filtered = [
+            item for item in ordered_conversations if search.lower() in item["title"].lower()
+        ]
+        groups: OrderedDict[str, list[dict[str, Any]]] = OrderedDict(
+            (name, [])
+            for name in ("Hoy", "Ayer", "Últimos 7 días", "Últimos 30 días", "Anteriores")
+        )
+        for item in filtered:
+            groups[conversation_group(item["updated_at"])].append(item)
+
+        for group_name, conversations in groups.items():
+            if not conversations:
+                continue
+            st.markdown(
+                f"<div class='session-group'>{group_name}</div>",
+                unsafe_allow_html=True,
+            )
+            for item in conversations:
+                conversation_id = item["id"]
+                active = conversation_id == st.session_state.current_conversation_id
+                title_col, menu_col = st.columns(
+                    [0.82, 0.18], gap="small", vertical_alignment="center"
+                )
+                with title_col:
+                    if st.button(
+                        f"{'● ' if active else ''}{item['title']}",
+                        key=f"conversation-{conversation_id}",
+                        type="primary" if active else "secondary",
+                        width="stretch",
+                        help=item["title"],
+                    ):
+                        st.session_state.current_conversation_id = conversation_id
+                        st.rerun()
+                with menu_col:
+                    with st.popover("⋯"):
+                        st.caption("Opciones del chat")
+                        with st.form(f"rename-{conversation_id}"):
+                            new_title = st.text_input(
+                                "Nombre",
+                                value=item["title"],
+                                key=f"rename-title-{conversation_id}",
+                            )
+                            rename = st.form_submit_button("Renombrar", width="stretch")
+                        if rename and new_title.strip():
+                            item["title"] = conversation_title(new_title.strip(), max_length=48)
+                            item["updated_at"] = datetime.now(UTC)
+                            st.rerun()
+                        if st.button(
+                            "Eliminar chat",
+                            key=f"delete-{conversation_id}",
+                            width="stretch",
+                        ):
+                            delete_conversation(conversation_id)
+                            st.rerun()
+                st.markdown(
+                    f"<div class='session-caption'>{len(item['messages'])} mensajes</div>",
+                    unsafe_allow_html=True,
+                )
+
+
+def render_right_settings(service_ready: bool) -> None:
+    with st.container(key="right_settings_panel"):
+        st.markdown("<div class='panel-title'>Configuración</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div class='panel-subtitle'>Ajustes de recuperación y visualización de esta sesión.</div>",
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("**GraphRAG**")
+        st.session_state.top_k = st.slider(
+            "Top K de recuperación",
+            min_value=1,
+            max_value=10,
+            value=int(st.session_state.top_k),
+            help="Cantidad máxima de contextos entregados al generador.",
+        )
+        st.session_state.show_trace = st.toggle(
+            "Actividad técnica",
+            value=bool(st.session_state.show_trace),
+            help="Muestra índices, expansión del grafo y trazabilidad del retrieval.",
+        )
+        st.session_state.show_evidence = st.toggle(
+            "Evidencia recuperada",
+            value=bool(st.session_state.show_evidence),
+            help="Permite inspeccionar chunks, códigos y pagos recuperados.",
+        )
+        st.session_state.show_query_progress = st.toggle(
+            "Progreso de consulta",
+            value=bool(st.session_state.show_query_progress),
+            help="Muestra las etapas visibles de recuperación mientras se procesa la pregunta.",
+        )
+
+        st.divider()
+        st.markdown("**Estado**")
+        if service_ready:
+            st.success("API y Neo4j disponibles", icon="✅")
+        else:
+            st.warning("API / Neo4j no disponible", icon="⚠️")
+
+        st.markdown(
+            "<span class='tech-pill'>Vector search</span>"
+            "<span class='tech-pill'>Full-text</span>"
+            "<span class='tech-pill'>Graph expansion</span>",
+            unsafe_allow_html=True,
+        )
+
+        st.divider()
+        st.markdown("**Conversación**")
+        if st.button("Limpiar conversación", key="clear-current", width="stretch"):
+            clear_current_conversation()
+            st.rerun()
+
+        st.markdown(
+            "<div class='settings-note'>"
+            "El historial vive solo en la sesión de Streamlit; no se agrega infraestructura "
+            "adicional porque no es necesaria para demostrar GraphRAG."
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
 
 def render_topbar(conversation: dict[str, Any], ready: bool) -> None:
@@ -473,17 +744,22 @@ def render_trace(trace: dict[str, Any] | None) -> None:
 
 
 def render_assistant_payload(payload: dict[str, Any]) -> None:
-    if not st.session_state.show_trace:
+    if not st.session_state.show_trace and not st.session_state.show_evidence:
         return
     with st.expander("Actividad técnica de GraphRAG", expanded=False):
-        trace_tab, evidence_tab = st.tabs(["Trazabilidad", "Evidencia recuperada"])
-        with trace_tab:
-            st.caption(
-                "Muestra el mecanismo técnico de recuperación ejecutado por la PoC "
-                "sin exponer razonamiento privado del modelo."
-            )
+        if st.session_state.show_trace and st.session_state.show_evidence:
+            trace_tab, evidence_tab = st.tabs(["Trazabilidad", "Evidencia recuperada"])
+            with trace_tab:
+                st.caption(
+                    "Muestra el mecanismo técnico de recuperación ejecutado por la PoC "
+                    "sin exponer razonamiento privado del modelo."
+                )
+                render_trace(payload.get("trace"))
+            with evidence_tab:
+                render_contexts(payload.get("contexts", []))
+        elif st.session_state.show_trace:
             render_trace(payload.get("trace"))
-        with evidence_tab:
+        else:
             render_contexts(payload.get("contexts", []))
 
 
@@ -502,7 +778,7 @@ def render_empty_state() -> None:
     left, center, right = st.columns([3, 1, 3])
     del left, right
     with center:
-        st.image(APP_ICON, width=72)
+        st.image(APP_ICON, width=70)
     st.markdown(
         """
         <div class="hero-title" style="text-align:center">¿Qué quieres investigar sobre tus pagos?</div>
@@ -513,10 +789,7 @@ def render_empty_state() -> None:
         """,
         unsafe_allow_html=True,
     )
-    st.markdown(
-        "<div class='suggestion-label'>Preguntas de ejemplo</div>",
-        unsafe_allow_html=True,
-    )
+    st.markdown("<div class='suggestion-label'>Preguntas de ejemplo</div>", unsafe_allow_html=True)
     left_column, right_column = st.columns(2, gap="small")
     for index, question in enumerate(EXAMPLE_QUESTIONS):
         column = left_column if index % 2 == 0 else right_column
@@ -524,15 +797,6 @@ def render_empty_state() -> None:
             if st.button(question, key=f"example-{index}", width="stretch"):
                 st.session_state.pending_question = question
 
-
-for key, default in {
-    "conversations": {},
-    "current_conversation_id": None,
-    "pending_question": None,
-    "show_trace": True,
-    "top_k": 4,
-}.items():
-    st.session_state.setdefault(key, default)
 
 if not st.session_state.conversations:
     new_conversation()
@@ -546,109 +810,38 @@ except httpx.HTTPError:
     readiness_payload = {}
     service_ready = False
 
-with st.sidebar:
-    render_brand_header()
-
-    if st.button("＋ Nuevo chat", type="primary", width="stretch"):
-        new_conversation()
-        st.rerun()
-
-    search = st.text_input(
-        "Buscar chats",
-        placeholder="Buscar conversaciones",
-        label_visibility="collapsed",
-    )
-
-    ordered_conversations = sorted(
-        st.session_state.conversations.values(),
-        key=lambda item: item["updated_at"],
-        reverse=True,
-    )
-    filtered = [
-        item for item in ordered_conversations if search.lower() in item["title"].lower()
-    ]
-    groups: OrderedDict[str, list[dict[str, Any]]] = OrderedDict(
-        (name, [])
-        for name in ("Hoy", "Ayer", "Últimos 7 días", "Últimos 30 días", "Anteriores")
-    )
-    for item in filtered:
-        groups[conversation_group(item["updated_at"])].append(item)
-
-    for group_name, conversations in groups.items():
-        if not conversations:
-            continue
-        st.markdown(f"<div class='session-group'>{group_name}</div>", unsafe_allow_html=True)
-        for item in conversations:
-            conversation_id = item["id"]
-            active = conversation_id == st.session_state.current_conversation_id
-            title_col, menu_col = st.columns([0.84, 0.16], gap="small", vertical_alignment="center")
-            with title_col:
-                if st.button(
-                    f"{'● ' if active else ''}{item['title']}",
-                    key=f"conversation-{conversation_id}",
-                    type="primary" if active else "secondary",
-                    width="stretch",
-                    help=item["title"],
-                ):
-                    st.session_state.current_conversation_id = conversation_id
-                    st.rerun()
-            with menu_col:
-                with st.popover("⋯"):
-                    st.caption("Opciones del chat")
-                    with st.form(f"rename-{conversation_id}"):
-                        new_title = st.text_input(
-                            "Nombre",
-                            value=item["title"],
-                            key=f"rename-title-{conversation_id}",
-                        )
-                        rename = st.form_submit_button("Renombrar", width="stretch")
-                    if rename and new_title.strip():
-                        item["title"] = conversation_title(new_title.strip(), max_length=48)
-                        item["updated_at"] = datetime.now(UTC)
-                        st.rerun()
-                    if st.button("Eliminar chat", key=f"delete-{conversation_id}", width="stretch"):
-                        delete_conversation(conversation_id)
-                        st.rerun()
-            st.markdown(
-                f"<div class='session-caption'>{len(item['messages'])} mensajes</div>",
-                unsafe_allow_html=True,
-            )
-
-    st.divider()
-    with st.expander("Configuración de la PoC", expanded=False):
-        st.session_state.top_k = st.slider(
-            "Top K de recuperación",
-            min_value=1,
-            max_value=10,
-            value=int(st.session_state.top_k),
-            help="Cantidad máxima de contextos que GraphRAG entrega al generador.",
-        )
-        st.session_state.show_trace = st.toggle(
-            "Actividad técnica",
-            value=st.session_state.show_trace,
-            help="Muestra recuperación, índices, expansión y evidencia sin razonamiento privado.",
-        )
-        st.markdown(
-            "<span class='tech-pill'>Vector search</span>"
-            "<span class='tech-pill'>Full-text</span>"
-            "<span class='tech-pill'>Graph expansion</span>",
-            unsafe_allow_html=True,
-        )
-
-    if service_ready:
-        st.caption("● API ready · Neo4j ready")
-    else:
-        st.caption("○ API / Neo4j no disponible")
-
 conversation = current_conversation()
-render_topbar(conversation, service_ready)
 
-messages = conversation["messages"]
-if messages:
-    for message in messages:
-        render_message(message)
+if st.session_state.left_sidebar_collapsed:
+    center_col, right_col = st.columns([1.0, 0.29], gap="large")
+    with center_col:
+        with st.container(key="left_reopen_row"):
+            if st.button("☰", key="open-left", help="Mostrar historial"):
+                st.session_state.left_sidebar_collapsed = False
+                st.rerun()
+        render_topbar(conversation, service_ready)
+        messages = conversation["messages"]
+        if messages:
+            for message in messages:
+                render_message(message)
+        else:
+            render_empty_state()
+    with right_col:
+        render_right_settings(service_ready)
 else:
-    render_empty_state()
+    left_col, center_col, right_col = st.columns([0.29, 0.94, 0.29], gap="large")
+    with left_col:
+        render_left_navigation()
+    with center_col:
+        render_topbar(conversation, service_ready)
+        messages = conversation["messages"]
+        if messages:
+            for message in messages:
+                render_message(message)
+        else:
+            render_empty_state()
+    with right_col:
+        render_right_settings(service_ready)
 
 pending = st.session_state.pop("pending_question", None)
 question = st.chat_input("Pregunta sobre rechazos, incidencias o controles de payment processing")
@@ -661,15 +854,19 @@ if question:
 
     with st.chat_message("assistant", avatar=APP_ICON):
         try:
-            with st.status("Analizando la pregunta con GraphRAG…", expanded=True) as status:
-                status.write("Buscando conocimiento por similitud semántica y texto completo…")
-                payload = client.query(question, int(st.session_state.top_k))
-                status.write("Expandiendo entidades y relaciones conectadas en Neo4j…")
-                status.update(
-                    label="Contexto GraphRAG recuperado",
-                    state="complete",
-                    expanded=False,
-                )
+            if st.session_state.show_query_progress:
+                with st.status("Analizando la pregunta con GraphRAG…", expanded=True) as status:
+                    status.write("Buscando conocimiento por similitud semántica y texto completo…")
+                    payload = client.query(question, int(st.session_state.top_k))
+                    status.write("Expandiendo entidades y relaciones conectadas en Neo4j…")
+                    status.update(
+                        label="Contexto GraphRAG recuperado",
+                        state="complete",
+                        expanded=False,
+                    )
+            else:
+                with st.spinner("Consultando GraphRAG…"):
+                    payload = client.query(question, int(st.session_state.top_k))
 
             answer = payload["answer"]
             st.markdown(answer)

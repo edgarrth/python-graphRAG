@@ -42,3 +42,30 @@ def test_axiz_reference_assets_are_packaged() -> None:
     assert (frontend / "assets" / "axiz-logo@2x.png").is_file()
     assert (frontend / "assets" / "favicon.png").is_file()
     assert (frontend / ".streamlit" / "config.toml").is_file()
+
+
+def test_frontend_uses_custom_collapsible_navigation_and_right_settings() -> None:
+    frontend = Path(__file__).resolve().parents[1] / "frontend"
+    app_source = (frontend / "app.py").read_text(encoding="utf-8")
+    config_source = (frontend / ".streamlit" / "config.toml").read_text(encoding="utf-8")
+
+    assert 'left_sidebar_collapsed' in app_source
+    assert 'key="collapse-left"' in app_source
+    assert 'key="open-left"' in app_source
+    assert 'key="left_nav_panel"' in app_source
+    assert 'key="right_settings_panel"' in app_source
+    assert 'CHAT_MAX_WIDTH = 1040 if LEFT_COLLAPSED else 940' in app_source
+    assert '[data-testid="stSidebar"]' in app_source
+    assert 'display:none !important' in app_source
+    assert 'toolbarMode = "minimal"' in config_source
+
+
+def test_right_settings_exposes_graph_rag_controls() -> None:
+    frontend = Path(__file__).resolve().parents[1] / "frontend"
+    app_source = (frontend / "app.py").read_text(encoding="utf-8")
+
+    assert 'Top K de recuperación' in app_source
+    assert 'Actividad técnica' in app_source
+    assert 'Evidencia recuperada' in app_source
+    assert 'Progreso de consulta' in app_source
+    assert 'Limpiar conversación' in app_source
