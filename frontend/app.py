@@ -4,6 +4,7 @@ import inspect
 from collections import OrderedDict
 from datetime import UTC, datetime
 from html import escape
+import logging
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -11,7 +12,11 @@ from uuid import uuid4
 import httpx
 import streamlit as st
 from api_client import ApiClient
+from chat_routing import payment_ids
 from ui_helpers import EXAMPLE_QUESTIONS, conversation_group, conversation_title, trace_rows
+
+LOGGER = logging.getLogger("axiz.graphrag.frontend")
+logging.basicConfig(level=logging.INFO)
 
 APP_DIR = Path(__file__).resolve().parent
 ASSET_DIR = APP_DIR / "assets"
@@ -35,11 +40,15 @@ for key, default in {
     "conversations": {},
     "current_conversation_id": None,
     "pending_question": None,
+    "submitted_chat_question": None,
     "pending_request": None,
     "show_trace": True,
     "show_query_progress": True,
     "show_evidence": True,
     "top_k": 4,
+    "retrieval_mode": "Neural GraphRAG inteligente",
+    "pending_conversation_payment_id": None,
+    "pending_retrieval_mode": "traditional",
     "left_sidebar_collapsed": False,
     "scroll_nonce": 0,
 }.items():
@@ -351,6 +360,7 @@ def new_conversation() -> str:
         "created_at": now,
         "updated_at": now,
         "messages": [],
+        "last_payment_id": None,
     }
     st.session_state.current_conversation_id = conversation_id
     return conversation_id
@@ -385,6 +395,7 @@ def delete_conversation(conversation_id: str) -> None:
 def clear_current_conversation() -> None:
     conversation = current_conversation()
     conversation["messages"] = []
+    conversation["last_payment_id"] = None
     conversation["title"] = "Nueva conversación"
     conversation["updated_at"] = datetime.now(UTC)
 
@@ -437,8 +448,11 @@ def render_left_navigation(service_ready: bool, readiness: dict[str, Any]) -> No
         if provider == "openai" and not key_configured:
             runtime += " · API key ausente"
         st.caption(f"Generación activa: **{runtime}**")
-        with st.expander("GraphSAGE · pagos similares", expanded=False):
-            st.caption("Entrena un modelo neuronal con el grafo de pagos y busca vecinos estructurales.")
+        with st.expander("GraphSAGE · administración y pruebas", expanded=False):
+            st.caption(
+                "Panel técnico: entrena el modelo o prueba directamente la similitud entre pagos. "
+                "Para consultar en lenguaje natural, utiliza el chat central: no necesitas ingresar aquí el ID."
+            )
             if service_ready:
                 try:
                     neural = ApiClient().graphsage_status()
@@ -477,7 +491,7 @@ def render_left_navigation(service_ready: bool, readiness: dict[str, Any]) -> No
                         st.error(f"Consulta neuronal fallida: {exc}")
                 st.caption(
                     "La similitud coseno de GraphSAGE no demuestra una causa raíz compartida. "
-                    "Para combinarla con GraphRAG usa neural_payment_id en la API."
+                    "El chat inteligente puede activar GraphSAGE automáticamente al pedir similitud."
                 )
 
         if st.button("＋ Nuevo chat", type="primary", width="stretch"):
@@ -564,6 +578,28 @@ def render_right_settings() -> None:
             unsafe_allow_html=True,
         )
 
+        st.markdown("**Modo de recuperación del chat**")
+        st.selectbox(
+            "Modalidad",
+            options=["Neural GraphRAG inteligente", "GraphRAG tradicional"],
+            key="retrieval_mode",
+            help=(
+                "Inteligente: activa GraphSAGE cuando solicitas similitud y hay un pago inequívoco. "
+                "Tradicional: búsqueda híbrida y expansión original del grafo."
+            ),
+        )
+        if st.session_state.retrieval_mode == "Neural GraphRAG inteligente":
+            st.caption(
+                "Escribe el ID del pago en el chat cuando quieras investigar uno. "
+                "Si pides pagos similares, el agente usa ese ID o el último pago "
+                "mencionado en esta conversación; para preguntas generales usa GraphRAG habitual."
+            )
+            reference = current_conversation().get("last_payment_id")
+            st.caption(f"Referencia de esta conversación: **{reference or 'ninguna todavía'}**")
+            st.caption(
+                "La búsqueda neuronal requiere embeddings entrenados. "
+                "El panel izquierdo es opcional y solo sirve para administrar el modelo."
+            )
         st.markdown("**GraphRAG**")
         st.session_state.top_k = st.slider(
             "Top K de recuperación",
@@ -666,6 +702,19 @@ def render_trace(trace: dict[str, Any] | None) -> None:
 
 
 def render_assistant_payload(payload: dict[str, Any]) -> None:
+    # A compact, always-visible account of which evidence was used. Technical
+    # details can still be hidden independently in the settings panel.
+    trace = payload.get("trace") or {}
+    route = trace.get("neural_route")
+    if route == "neural":
+        reference = trace.get("neural_payment_id") or "—"
+        count = int(trace.get("neural_matches") or 0)
+        st.caption(
+            f"Recuperación: GraphRAG + GraphSAGE · Pago {reference} · "
+            f"{count} pagos similares. La similitud no demuestra causalidad."
+        )
+    elif route == "unavailable":
+        st.warning(trace.get("neural_note") or "GraphSAGE no disponible; se usó GraphRAG tradicional.")
     if not st.session_state.show_trace and not st.session_state.show_evidence:
         return
     with st.expander("Actividad técnica de GraphRAG", expanded=False):
@@ -691,6 +740,13 @@ def render_assistant_payload(payload: dict[str, Any]) -> None:
             render_trace(payload.get("trace"))
         else:
             render_contexts(payload.get("contexts", []))
+        if st.session_state.show_evidence and payload.get("neural_neighbors"):
+            st.markdown("**Vecinos estructurales GraphSAGE**")
+            st.caption(
+                "Estos pagos presentan similitud de embeddings; no se confirma "
+                "que compartan la misma causa del incidente."
+            )
+            st.dataframe(payload["neural_neighbors"], hide_index=True, width="stretch")
 
 
 def render_message(message: dict[str, Any]) -> None:
@@ -701,6 +757,20 @@ def render_message(message: dict[str, Any]) -> None:
         payload = message.get("payload")
         if payload:
             render_assistant_payload(payload)
+
+
+def queue_chat_question(widget_key: str) -> None:
+    """Persist chat input in the submit callback before the widget clears it."""
+    value = st.session_state.get(widget_key)
+    if isinstance(value, str) and value.strip():
+        st.session_state.submitted_chat_question = value.strip()
+        LOGGER.info("Chat question submitted; queued for dispatch")
+
+
+def queue_example_question(question: str) -> None:
+    """Queue example in widget callback before Streamlit reruns the page."""
+    st.session_state.pending_question = question
+    LOGGER.info("Example question selected; queued for dispatch")
 
 
 def render_empty_state() -> None:
@@ -729,8 +799,10 @@ def render_empty_state() -> None:
             for index, question in enumerate(EXAMPLE_QUESTIONS):
                 column = left_column if index % 2 == 0 else right_column
                 with column:
-                    if st.button(question, key=f"example-{index}", width="stretch"):
-                        st.session_state.pending_question = question
+                    st.button(
+                        question, key=f"example-{index}", width="stretch",
+                        on_click=queue_example_question, args=(question,),
+                    )
 
 
 
@@ -824,8 +896,11 @@ def render_scroll_driver(conversation_id: str) -> None:
             )
 
 
-def render_streaming_assistant(client: ApiClient, question: str) -> None:
-    """Render one pending GraphRAG request using the API SSE stream."""
+def render_streaming_assistant(
+    client: ApiClient, question: str,
+    *, retrieval_mode: str = "traditional", conversation_payment_id: str | None = None,
+) -> None:
+    """Stream the original retrieval or conversational automatic GraphSAGE route."""
     # This marker immediately suppresses any stale empty-state DOM left from
     # the previous render while the long-lived SSE run is still in progress.
     st.html('<div class="stream-active-marker" aria-hidden="true"></div>')
@@ -840,7 +915,11 @@ def render_streaming_assistant(client: ApiClient, question: str) -> None:
             pending_parts: list[str] = []
             pending_chars = 0
 
-            for message in client.query_stream(question, int(st.session_state.top_k)):
+            for message in client.query_stream(
+                question, int(st.session_state.top_k),
+                retrieval_mode=retrieval_mode,
+                conversation_payment_id=conversation_payment_id,
+            ):
                 event = message.get("event")
                 data = message.get("data") or {}
 
@@ -898,7 +977,8 @@ def render_streaming_assistant(client: ApiClient, question: str) -> None:
                 }
             render_assistant_payload(payload)
             add_message("assistant", answer.strip(), payload)
-        except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+        except Exception as exc:
+            LOGGER.exception("Chat generation failed")
             error_message = (
                 "No fue posible completar la consulta GraphRAG por streaming. "
                 "Verifica el estado de `api`, Neo4j y la configuración del proveedor de generación."
@@ -910,6 +990,7 @@ def render_streaming_assistant(client: ApiClient, question: str) -> None:
             add_message("assistant", error_message)
         finally:
             st.session_state.pending_request = None
+            st.session_state.pending_conversation_payment_id = None
 
     st.rerun()
 
@@ -934,19 +1015,27 @@ def render_chat_area(
                 render_empty_state()
 
             if pending_request:
-                render_streaming_assistant(client, str(pending_request))
+                render_streaming_assistant(
+                    client, str(pending_request),
+                    retrieval_mode=st.session_state.pending_retrieval_mode,
+                    conversation_payment_id=st.session_state.pending_conversation_payment_id,
+                )
         st.html('<div class="chat-bottom-anchor" aria-hidden="true"></div>')
 
     # Nest chat_input so Streamlit renders it inline in the center column rather
     # than as a page-level fixed footer. This keeps both sidecards independent.
     pending_example = st.session_state.pop("pending_question", None)
     with st.container(key="chat_composer"):
+        widget_key = f"chat-input-{conversation['id']}"
         question = st.chat_input(
             "Pregunta sobre rechazos, incidencias o controles de payment processing",
             disabled=bool(st.session_state.get("pending_request")),
-            key=f"chat-input-{conversation['id']}",
+            key=widget_key,
+            on_submit=queue_chat_question,
+            args=(widget_key,),
         )
-    return question or pending_example
+    queued_chat = st.session_state.pop("submitted_chat_question", None)
+    return pending_example or queued_chat or question
 
 
 if not st.session_state.conversations:
@@ -990,7 +1079,25 @@ else:
             )
 
 if submitted_question and not st.session_state.get("pending_request"):
+    # Only the user can establish a reference, never an assistant answer, model
+    # guess or similarity result. Capture prior reference BEFORE updating it.
+    previous_reference = conversation.get("last_payment_id")
+    ids = payment_ids(submitted_question)
+    if len(ids) == 1:
+        conversation["last_payment_id"] = ids[0]
+    elif len(ids) > 1:
+        conversation["last_payment_id"] = None  # No silent choice of first ID.
+    mode = (
+        "auto" if st.session_state.retrieval_mode == "Neural GraphRAG inteligente"
+        else "traditional"
+    )
     add_message("user", submitted_question)
+    st.session_state.pending_conversation_payment_id = previous_reference
+    st.session_state.pending_retrieval_mode = mode
     st.session_state.pending_request = submitted_question
     st.session_state.scroll_nonce += 1
-    st.rerun()
+    LOGGER.info("Dispatching chat question; mode=%s; explicit_payment_count=%s", mode, len(ids))
+    render_streaming_assistant(
+        client, submitted_question, retrieval_mode=mode,
+        conversation_payment_id=previous_reference,
+    )

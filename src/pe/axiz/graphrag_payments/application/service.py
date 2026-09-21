@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from pe.axiz.graphrag_payments.application.retrieval import GraphAwareRetriever
 
 from pe.axiz.graphrag_payments.application.generation import AnswerGenerator
+from pe.axiz.graphrag_payments.application.neural_routing import NeuralRoute, payment_ids, resolve_neural_route
 from pe.axiz.graphrag_payments.domain.models import (
     ContextItem,
     GraphEdge,
@@ -37,27 +38,53 @@ class GraphRagService:
         self._retriever = retriever
         self._generator = generator
 
-    def _neural_retrieve(
-        self, request: GraphRagQueryRequest, top_k: int
-    ) -> tuple[Any, list[GraphSageNeighbor]]:
-        """Keep exact-code and hybrid retrieval; add opt-in structural evidence."""
-        retrieval = self._get_retriever().search(request.question, top_k)
-        if not request.neural_payment_id:
-            return retrieval, []
-        from pe.axiz.graphrag_payments.application.graphsage import GraphSageService
-
-        result = GraphSageService(self._driver, self._settings).similar(
-            request.neural_payment_id, top_k=min(5, top_k)
+    @staticmethod
+    def _route(request: GraphRagQueryRequest) -> NeuralRoute:
+        return resolve_neural_route(
+            request.question,
+            retrieval_mode=request.retrieval_mode,
+            neural_payment_id=request.neural_payment_id,
+            conversation_payment_id=request.conversation_payment_id,
         )
+
+    @staticmethod
+    def _effective_question(request: GraphRagQueryRequest, route: NeuralRoute) -> str:
+        # A follow-up like "¿y otros similares?" needs the prior explicit payment
+        # reference in the retrieval and generation prompts, not only GraphSAGE.
+        if route.from_conversation and route.payment_id and not payment_ids(request.question):
+            return f"{request.question} (pago de referencia: {route.payment_id})"
+        return request.question
+
+    def _neural_retrieve(
+        self, request: GraphRagQueryRequest, top_k: int, route: NeuralRoute
+    ) -> tuple[Any, list[GraphSageNeighbor], str | None]:
+        """Keep old hybrid results, add neural evidence only for resolved references."""
+        retrieval = self._get_retriever().search(self._effective_question(request, route), top_k)
+        if route.action != "neural" or not route.payment_id:
+            return retrieval, [], None
+        from pe.axiz.graphrag_payments.application.graphsage import (
+            GraphSageNotReadyError,
+            GraphSagePaymentNotFoundError,
+            GraphSageService,
+        )
+
+        try:
+            result = GraphSageService(self._driver, self._settings).similar(
+                route.payment_id, top_k=min(5, top_k)
+            )
+        except (GraphSageNotReadyError, GraphSagePaymentNotFoundError) as exc:
+            if request.retrieval_mode != "auto" or request.neural_payment_id:
+                raise  # Original explicit API contract is unchanged.
+            return retrieval, [], f"GraphSAGE no ejecutado para {route.payment_id}: {exc}"
         neighbors = result.neighbors
         if neighbors:
-            # A top_k=1 explicit-code query must NEVER lose its exact-code anchor.
+            # Keep exact-code anchor even at top_k=1.
             reserve_slot = top_k > 1 or not getattr(retrieval, "explicit_reason_codes", [])
             if not reserve_slot:
-                return retrieval, neighbors
+                return retrieval, neighbors, None
             evidence = ContextItem(
-                chunk_id=f"GRAPHSAGE:{request.neural_payment_id}",
-                title=f"Similitud estructural GraphSAGE de {request.neural_payment_id}",
+                chunk_id=f"GRAPHSAGE:{route.payment_id}",
+                title=f"Similitud estructural GraphSAGE de {route.payment_id}",
                 text=(
                     "Los vecinos enumerados fueron identificados mediante similitud coseno entre "
                     "embeddings de GraphSAGE; no prueban una causa raíz compartida, fraude ni "
@@ -67,13 +94,27 @@ class GraphRagService:
                 source="graphsage",
                 neural_matches=neighbors,
             )
-            # Preserve existing evidence ordering, especially exact reason-code anchors.
             retrieval = SimpleNamespace(
                 contexts=[*retrieval.contexts[: max(0, top_k - 1)], evidence],
                 strategy=str(getattr(retrieval, "strategy", "hybrid")) + "+graphsage",
                 explicit_reason_codes=list(getattr(retrieval, "explicit_reason_codes", [])),
             )
-        return retrieval, neighbors
+        return retrieval, neighbors, None
+
+    def _clarification(self, request: GraphRagQueryRequest, route: NeuralRoute) -> GraphRagQueryResponse:
+        """Never invent a reference or generate pseudo-neural results for ambiguous requests."""
+        retrieval = SimpleNamespace(contexts=[], strategy=route.action, explicit_reason_codes=[])
+        return GraphRagQueryResponse(
+            question=request.question,
+            answer=route.note,
+            generation_provider=self._settings.generation_provider,
+            generation_model=(
+                self._settings.openai_model if self._settings.generation_provider == "openai" else None
+            ),
+            contexts=[],
+            trace=self._trace(self._resolve_top_k(request), retrieval, route=route),
+            neural_neighbors=[],
+        )
 
     def _resolve_top_k(self, request: GraphRagQueryRequest) -> int:
         top_k = request.top_k or self._settings.default_top_k
@@ -89,7 +130,14 @@ class GraphRagService:
         return retriever
 
     def _trace(
-        self, top_k: int, retrieval: Any, payment_id: str | None = None, neural_matches: int = 0
+        self,
+        top_k: int,
+        retrieval: Any,
+        payment_id: str | None = None,
+        neural_matches: int = 0,
+        *,
+        route: NeuralRoute | None = None,
+        neural_warning: str | None = None,
     ) -> RetrievalTrace:
         contexts = getattr(retrieval, "contexts", [])
         return RetrievalTrace(
@@ -108,12 +156,17 @@ class GraphRagService:
             explicit_reason_codes=list(getattr(retrieval, "explicit_reason_codes", [])),
             neural_payment_id=payment_id,
             neural_matches=neural_matches,
+            neural_route=("unavailable" if neural_warning else route.action if route else "traditional"),
+            neural_note=neural_warning or (route.note if route else None),
         )
 
     def query(self, request: GraphRagQueryRequest) -> GraphRagQueryResponse:
+        route = self._route(request)
+        if route.action in ("needs_reference", "multiple_references"):
+            return self._clarification(request, route)
         top_k = self._resolve_top_k(request)
-        retrieval, neighbors = self._neural_retrieve(request, top_k)
-        answer = self._generator.generate(request.question, retrieval.contexts)
+        retrieval, neighbors, warning = self._neural_retrieve(request, top_k, route)
+        answer = self._generator.generate(self._effective_question(request, route), retrieval.contexts)
         contexts = retrieval.contexts if request.include_context else []
         return GraphRagQueryResponse(
             question=request.question,
@@ -123,13 +176,26 @@ class GraphRagService:
                 self._settings.openai_model if self._settings.generation_provider == "openai" else None
             ),
             contexts=contexts,
-            trace=self._trace(top_k, retrieval, request.neural_payment_id, len(neighbors)),
+            trace=self._trace(
+                top_k, retrieval, route.payment_id, len(neighbors), route=route,
+                neural_warning=warning,
+            ),
             neural_neighbors=neighbors,
         )
 
     def query_stream(self, request: GraphRagQueryRequest) -> Iterator[dict[str, Any]]:
-        """Yield typed events for the SSE transport."""
+        """REST and SSE share the same deterministic routing decisions."""
         started = perf_counter()
+        route = self._route(request)
+        if route.action in ("needs_reference", "multiple_references"):
+            response = self._clarification(request, route)
+            yield {"event": "stage", "data": {"stage": "routing", "message": "Aclarando pago de referencia…"}}
+            yield {"event": "delta", "data": {"delta": response.answer}}
+            yield {"event": "complete", "data": {
+                **response.model_dump(mode="json"),
+                "timings": {"retrieval_ms": 0, "generation_ms": 0, "total_ms": 0},
+            }}
+            return
         top_k = self._resolve_top_k(request)
         yield {
             "event": "stage",
@@ -137,9 +203,12 @@ class GraphRagService:
         }
 
         retrieval_started = perf_counter()
-        retrieval, neighbors = self._neural_retrieve(request, top_k)
+        retrieval, neighbors, warning = self._neural_retrieve(request, top_k, route)
         retrieval_ms = round((perf_counter() - retrieval_started) * 1000, 1)
-        trace = self._trace(top_k, retrieval, request.neural_payment_id, len(neighbors))
+        trace = self._trace(
+            top_k, retrieval, route.payment_id, len(neighbors), route=route,
+            neural_warning=warning,
+        )
         yield {
             "event": "retrieval",
             "data": {
@@ -149,8 +218,7 @@ class GraphRagService:
                 "neural_neighbors": [n.model_dump(mode="json") for n in neighbors],
                 "contexts": (
                     [item.model_dump(mode="json") for item in retrieval.contexts]
-                    if request.include_context
-                    else []
+                    if request.include_context else []
                 ),
             },
         }
@@ -166,13 +234,11 @@ class GraphRagService:
                 ),
             },
         }
-
         answer_parts: list[str] = []
         generation_started = perf_counter()
-        for delta in self._generator.stream(request.question, retrieval.contexts):
+        for delta in self._generator.stream(self._effective_question(request, route), retrieval.contexts):
             answer_parts.append(delta)
             yield {"event": "delta", "data": {"delta": delta}}
-
         answer = "".join(answer_parts).strip()
         generation_ms = round((perf_counter() - generation_started) * 1000, 1)
         total_ms = round((perf_counter() - started) * 1000, 1)
@@ -187,17 +253,13 @@ class GraphRagService:
             trace=trace,
             neural_neighbors=neighbors,
         )
-        yield {
-            "event": "complete",
-            "data": {
-                **response.model_dump(mode="json"),
-                "timings": {
-                    "retrieval_ms": retrieval_ms,
-                    "generation_ms": generation_ms,
-                    "total_ms": total_ms,
-                },
+        yield {"event": "complete", "data": {
+            **response.model_dump(mode="json"),
+            "timings": {
+                "retrieval_ms": retrieval_ms, "generation_ms": generation_ms,
+                "total_ms": total_ms,
             },
-        }
+        }}
 
     def schema(self) -> SchemaResponse:
         labels, _, _ = self._driver.execute_query(

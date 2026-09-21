@@ -10,6 +10,8 @@ class GraphRagQueryRequest(BaseModel):
     top_k: int | None = Field(default=None, ge=1, le=20)
     include_context: bool = True
     neural_payment_id: str | None = Field(default=None, min_length=1, max_length=80)
+    retrieval_mode: Literal["traditional", "auto"] = "traditional"
+    conversation_payment_id: str | None = Field(default=None, max_length=80)
 
 
 class PaymentEvidence(BaseModel):
@@ -105,6 +107,8 @@ class RetrievalTrace(BaseModel):
     explicit_reason_codes: list[str] = Field(default_factory=list)
     neural_payment_id: str | None = None
     neural_matches: int = 0
+    neural_route: str = "traditional"
+    neural_note: str | None = None
 
 
 class GraphRagQueryResponse(BaseModel):

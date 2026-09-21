@@ -9,6 +9,7 @@ EXAMPLE_QUESTIONS = [
     "¿Qué evidencia hay sobre fondos insuficientes y qué pagos están relacionados?",
     "¿Qué puede causar timeouts del emisor o adquirente en el flujo de pagos?",
     "¿Cómo ayuda la idempotencia a evitar cobros duplicados?",
+    "Busca pagos similares a PAY-1008 y explica sus relaciones.",
 ]
 
 
@@ -50,6 +51,9 @@ def trace_rows(trace: dict[str, Any] | None) -> list[tuple[str, str]]:
         ("Peso vectorial", str(trace.get("vector_weight", "—"))),
         ("Search ratio", str(trace.get("effective_search_ratio", "—"))),
         ("Estrategia", str(trace.get("retrieval_strategy", "hybrid"))),
+        ("Enrutamiento neuronal", str(trace.get("neural_route", "traditional"))),
+        ("Pago neuronal", str(trace.get("neural_payment_id") or "—")),
+        ("Detalle neuronal", str(trace.get("neural_note") or "—")),
         ("Códigos anclados", ", ".join(trace.get("explicit_reason_codes") or []) or "—"),
         ("Contextos retornados", str(trace.get("returned_contexts", 0))),
     ]

@@ -14,6 +14,8 @@ RUN python -m pip install \
       httpx==0.28.1
 
 COPY frontend ./
+# Share the exact payment-reference parser with FastAPI; no divergent UI heuristics.
+COPY src/pe ./pe
 
 EXPOSE 8501
 CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501"]

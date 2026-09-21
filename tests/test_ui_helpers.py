@@ -48,7 +48,8 @@ def test_trace_rows_has_expected_graphrag_fields() -> None:
 
 
 def test_example_questions_are_kept_for_empty_state() -> None:
-    assert len(EXAMPLE_QUESTIONS) == 4
+    assert len(EXAMPLE_QUESTIONS) == 5
+    assert any("similares a PAY-1008" in question for question in EXAMPLE_QUESTIONS)
     assert any("código 05" in question for question in EXAMPLE_QUESTIONS)
     assert any("idempotencia" in question for question in EXAMPLE_QUESTIONS)
 

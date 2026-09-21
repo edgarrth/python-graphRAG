@@ -17,21 +17,49 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
-    def query(self, question: str, top_k: int) -> dict[str, Any]:
+    @staticmethod
+    def _query_payload(
+        question: str, top_k: int, neural_payment_id: str | None = None,
+        *, retrieval_mode: str = "traditional", conversation_payment_id: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "question": question, "top_k": top_k, "include_context": True
+        }
+        if neural_payment_id:
+            payload["neural_payment_id"] = neural_payment_id
+        if retrieval_mode == "auto":
+            payload["retrieval_mode"] = "auto"
+            if conversation_payment_id:
+                payload["conversation_payment_id"] = conversation_payment_id
+        return payload
+
+    def query(
+        self, question: str, top_k: int, neural_payment_id: str | None = None,
+        *, retrieval_mode: str = "traditional", conversation_payment_id: str | None = None,
+    ) -> dict[str, Any]:
         response = httpx.post(
             f"{self.base_url}/api/v1/graphrag/query",
-            json={"question": question, "top_k": top_k, "include_context": True},
+            json=self._query_payload(
+                question, top_k, neural_payment_id,
+                retrieval_mode=retrieval_mode, conversation_payment_id=conversation_payment_id,
+            ),
             timeout=180,
         )
         response.raise_for_status()
         return response.json()
 
-    def query_stream(self, question: str, top_k: int) -> Iterator[dict[str, Any]]:
-        """Consume the API Server-Sent Events endpoint and yield typed events."""
+    def query_stream(
+        self, question: str, top_k: int, neural_payment_id: str | None = None,
+        *, retrieval_mode: str = "traditional", conversation_payment_id: str | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        """Consume the original SSE endpoint, optionally enriching with GraphSAGE."""
         with httpx.stream(
             "POST",
             f"{self.base_url}/api/v1/graphrag/query/stream",
-            json={"question": question, "top_k": top_k, "include_context": True},
+            json=self._query_payload(
+                question, top_k, neural_payment_id,
+                retrieval_mode=retrieval_mode, conversation_payment_id=conversation_payment_id,
+            ),
             headers={"Accept": "text/event-stream", "Cache-Control": "no-cache"},
             timeout=httpx.Timeout(180.0, connect=10.0),
         ) as response:

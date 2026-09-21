@@ -9,7 +9,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from neo4j import Driver, Neo4jError
+from neo4j import Driver
+from neo4j.exceptions import Neo4jError
 
 from pe.axiz.graphrag_payments.domain.models import (
     GraphSageNeighbor,

@@ -1,6 +1,6 @@
 # Axiz GraphRAG Payments PoC
 
-Versión de la PoC: **1.6.0** (GraphSAGE).
+Versión de la PoC: **1.7.0** (GraphRAG conversacional con GraphSAGE automático y referencia por conversación).
 
 PoC técnica en Python para demostrar una arquitectura **GraphRAG (Graph Retrieval-Augmented Generation)** sobre un caso funcional de **payment processing**: investigación de rechazos, timeouts y controles operativos de pagos.
 
@@ -257,6 +257,8 @@ Luego:
 
 ```bash
 docker compose -f infrastructure/docker-compose.yml up --build
+
+docker compose --env-file .env -f infrastructure/docker-compose.yml up --build --no-deps
 ```
 
 La construcción está optimizada para evitar duplicar trabajo pesado:
@@ -739,3 +741,151 @@ repositorios de plugins y al modelo de embeddings de Sentence Transformers; el v
 
 Documentación oficial: [GraphSAGE](https://neo4j.com/docs/graph-data-science/current/machine-learning/node-embeddings/graph-sage/),
 [GDS en Docker](https://neo4j.com/docs/graph-data-science/current/installation/installation-docker/).
+
+
+## Historial v1.6.1: selector del chat y corrección de import (flujo antiguo)
+
+La versión conserva el flujo GraphRAG original, los endpoints existentes y la consulta
+GraphSAGE independiente de la barra lateral. Se corrige el import de
+`Neo4jError` desde `neo4j.exceptions` (en el driver Neo4j 6.3.1, importar
+`Neo4jError` directamente desde `neo4j` podía impedir el arranque de FastAPI).
+
+En **Configuración → Modo de recuperación del chat**:
+
+- **GraphRAG tradicional** (predeterminado): vector + full-text + expansión del grafo;
+  no necesita entrenamiento neuronal y conserva el payload original.
+- **Neural GraphRAG combinado**: ingresa un ID de pago real (ej. `PAY-1007`);
+  al consultar se verifica que los embeddings estén listos y el chat envía
+  `neural_payment_id` a la misma API SSE. La respuesta y el panel de evidencia
+  incluyen contexto original y vecinos estructurales. La similitud no demuestra causalidad.
+
+**GraphSAGE independiente** sigue disponible en el desplegable izquierdo para
+entrenar el modelo y buscar pagos similares sin realizar preguntas al chat.
+El modo combinado NO entrena automáticamente: entrena primero desde ese desplegable.
+
+### Actualizar sin eliminar datos
+
+Desde la raíz del proyecto, una vez reemplazados los archivos con esta versión:
+
+```bash
+docker compose -f infrastructure/docker-compose.yml up -d --build
+```
+
+`dataset-loader` puede finalizar con código `0` al completar su carga; eso es normal.
+No utilices `docker compose down -v` si quieres conservar el volumen de Neo4j.
+El cambio de selector/import no necesita borrar ni reinicializar la base de datos.
+
+Verifica el arranque con:
+
+```bash
+docker compose -f infrastructure/docker-compose.yml ps
+docker compose -f infrastructure/docker-compose.yml logs --tail=80 api
+```
+
+Los tests de Python comprueban el import y la construcción del payload opcional,
+pero el entrenamiento con Neo4j GDS debe validarse con Docker ejecutándose.
+
+### Historial: corrección del chat frontend (v1.6.2)
+
+The Streamlit chat now captures example-button and chat-submit events in widget callbacks, dispatches the query in the same Streamlit run and logs a dispatch event to the frontend container. The original GraphRAG mode remains the default; the optional combined mode continues to use the selected GraphSAGE payment ID. Existing Neo4j data and GraphSAGE embeddings do not need to be reset or retrained. Rebuild the **frontend** image to apply the update:
+
+```bash
+docker compose --env-file .env -f infrastructure/docker-compose.yml up -d --build --no-deps frontend
+```
+
+To verify submission and detect any stream errors:
+
+```bash
+docker compose -f infrastructure/docker-compose.yml logs -f frontend api
+```
+
+If the chat still fails, check the frontend logs for `Chat question submitted`, `Dispatching chat question`, or `Chat generation failed` (do not share API keys).
+
+
+## Actualización v1.7.0: Neural GraphRAG conversacional (versión actual)
+
+La interfaz **ya no solicita un ID fijo en Configuración**. Se conservan las dos
+modalidades, ahora con **Neural GraphRAG inteligente** seleccionada por defecto:
+
+- **Inteligente:** preguntas generales y preguntas sobre un pago se resuelven con el
+  GraphRAG híbrido original. GraphSAGE solo se consulta cuando el usuario pide
+  explícitamente pagos *similares / parecidos / vecinos* y se dispone de un **único**
+  pago de referencia. El ID se detecta en la pregunta (por ejemplo, `PAY-1008`).
+- **Seguimiento:** después de mencionar `PAY-1008` en una pregunta, puedes escribir
+  «¿Y otros pagos similares?» en **la misma conversación**, sin volver a escribir
+  el ID. Un chat nuevo o «Limpiar conversación» no reutiliza la referencia anterior.
+- **Tradicional:** nunca llama al flujo neuronal de forma automática; conserva la
+  recuperación vectorial, full-text, expansión del grafo y streaming SSE previos.
+  La opción `neural_payment_id` de la API sigue admitida para clientes antiguos.
+- **Sin referencia / referencias ambiguas:** el agente pide un pago de referencia
+  en lugar de inventar uno. «Compara PAY-1008 y PAY-1010» se mantiene como una
+  consulta tradicional; para una búsqueda neuronal entre varios pagos se debe
+  escoger un ID por consulta.
+- **Modelo no entrenado o pago sin embedding:** las preguntas generales siguen
+  funcionando; si se solicita similitud se emplea la recuperación tradicional
+  y se indica en la trazabilidad que GraphSAGE no estuvo disponible.
+
+El **panel izquierdo** sigue siendo una herramienta técnica independiente para
+entrenar GraphSAGE, consultar el estado y probar vecinos mediante un ID. El
+**panel derecho** solo selecciona el modo; el **chat central** es el punto de
+entrada conversacional. La similitud neuronal no demuestra una causa común.
+
+### Ejemplos en el chat
+
+1. «¿Qué ocurrió con PAY-1008?» → GraphRAG tradicional; registra la referencia
+   de esa conversación.
+2. «¿Y otros pagos parecidos?» → GraphRAG + GraphSAGE para `PAY-1008`.
+3. «¿Qué significa el código 91?» → GraphRAG tradicional, sin consulta neuronal.
+4. «Busca pagos similares a PAY-1007» → GraphRAG + GraphSAGE para `PAY-1007`.
+
+### API REST y SSE
+
+Las rutas anteriores permanecen disponibles. Los campos **opcionales** nuevos
+son `retrieval_mode: "auto"` y `conversation_payment_id`. El valor por defecto
+para **clientes API existentes** sigue siendo `"traditional"` y el campo
+`neural_payment_id` continúa siendo compatible.
+
+```json
+{
+  "question": "¿Y otros pagos similares?",
+  "top_k": 4,
+  "include_context": true,
+  "retrieval_mode": "auto",
+  "conversation_payment_id": "PAY-1008"
+}
+```
+
+La respuesta y el evento SSE `complete` contienen `trace.neural_route`,
+`trace.neural_payment_id`, `trace.neural_matches` y `trace.neural_note` para
+indicar cuándo se activó GraphSAGE. La referencia conversacional se mantiene
+en la sesión de Streamlit, no en una base de datos ni en el estado global de la
+API. Si otro cliente API usa el modo automático, debe transmitir él mismo el ID
+previo al realizar un seguimiento.
+
+### Actualizar sin perder los embeddings de Neo4j
+
+1. Guarda tu `.env` local y cualquier modificación propia antes de sustituir
+   el código. No sustituyas tu archivo `.env` por `.env.example`.
+2. Descomprime el ZIP sobre tu repositorio existente, conservando el volumen
+   de datos de Docker. No uses `docker compose down -v`.
+3. Con `neo4j` y `dataset-loader` ya inicializados en tu entorno, reconstruye
+   **API y frontend** (ambos cambiaron en v1.7.0). `--no-deps` evita que Compose
+   vuelva a ejecutar el loader durante esta actualización de código:
+
+```bash
+docker compose --env-file .env -f infrastructure/docker-compose.yml up -d --build --no-deps api frontend
+```
+
+El tiempo depende de los paquetes y capas Docker en caché; normalmente de
+1 a 5 minutos, pero la primera compilación puede tomar más tiempo.
+No es necesario volver a entrenar GraphSAGE si ya hay embeddings persistidos
+para todos los pagos. Para validar el estado y seguir el procesamiento:
+
+```bash
+docker compose -f infrastructure/docker-compose.yml ps
+docker compose -f infrastructure/docker-compose.yml logs --tail=100 api frontend
+```
+
+**Limitación de validación:** los tests automatizados validan el enrutamiento,
+el payload y el streaming con dependencias simuladas. La ejecución real en
+navegador + Neo4j GDS debe verificarse al levantar Docker en tu equipo.

@@ -20,8 +20,10 @@ except ModuleNotFoundError:
     # Allows unit tests in lightweight CI without the Docker-image dependencies.
     stub = types.ModuleType("neo4j")
     stub.Driver = object  # type: ignore[attr-defined]
-    stub.Neo4jError = RuntimeError  # type: ignore[attr-defined]
+    exceptions = types.ModuleType("neo4j.exceptions")
+    exceptions.Neo4jError = RuntimeError  # type: ignore[attr-defined]
     sys.modules["neo4j"] = stub
+    sys.modules["neo4j.exceptions"] = exceptions
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "datasets"))
 
