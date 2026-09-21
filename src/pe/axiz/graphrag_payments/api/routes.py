@@ -4,15 +4,24 @@ import json
 from collections.abc import Iterator
 from functools import lru_cache
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from neo4j import Driver
 
+from pe.axiz.graphrag_payments.application.graphsage import (
+    GraphSageNotReadyError,
+    GraphSagePaymentNotFoundError,
+    GraphSageService,
+)
 from pe.axiz.graphrag_payments.application.generation import build_generator
 from pe.axiz.graphrag_payments.application.service import GraphRagService
 from pe.axiz.graphrag_payments.domain.models import (
     GraphRagQueryRequest,
     GraphRagQueryResponse,
+    GraphSageSimilarResponse,
+    GraphSageStatus,
+    GraphSageTrainRequest,
+    GraphSageTrainResponse,
     PaymentGraphResponse,
     SchemaResponse,
 )
@@ -124,3 +133,40 @@ def payment_graph(
     if not result.nodes:
         raise HTTPException(status_code=404, detail=f"Payment {payment_id} no encontrado")
     return result
+
+
+@router.get("/api/v1/graphsage/status", response_model=GraphSageStatus, tags=["graphsage"])
+def graphsage_status(driver: Driver = Depends(get_driver)) -> GraphSageStatus:
+    return GraphSageService(driver, get_settings()).status()
+
+
+@router.post("/api/v1/graphsage/train", response_model=GraphSageTrainResponse, tags=["graphsage"])
+def graphsage_train(
+    request: GraphSageTrainRequest,
+    driver: Driver = Depends(get_driver),
+) -> GraphSageTrainResponse:
+    try:
+        return GraphSageService(driver, get_settings()).train(request)
+    except GraphSageNotReadyError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get(
+    "/api/v1/graphsage/payments/{payment_id}/similar",
+    response_model=GraphSageSimilarResponse,
+    tags=["graphsage"],
+)
+def graphsage_similar(
+    payment_id: str,
+    top_k: int = Query(default=5, ge=1, le=20),
+    min_similarity: float = Query(default=0.0, ge=-1.0, le=1.0),
+    driver: Driver = Depends(get_driver),
+) -> GraphSageSimilarResponse:
+    try:
+        return GraphSageService(driver, get_settings()).similar(
+            payment_id, top_k=top_k, min_similarity=min_similarity
+        )
+    except GraphSagePaymentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"Pago {payment_id} no encontrado") from exc
+    except GraphSageNotReadyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

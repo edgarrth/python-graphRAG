@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     hybrid_alpha: float = Field(default=0.35, ge=0.0, le=1.0)
     effective_search_ratio: int = Field(default=3, ge=1, le=10)
 
+    graphsage_graph_name: str = "payments_graphsage"
+    graphsage_model_name: str = "payments_graphsage_v1"
+
     generation_provider: Literal["deterministic", "openai"] = "deterministic"
     openai_api_key: str | None = None
     openai_model: str = "gpt-5-mini"

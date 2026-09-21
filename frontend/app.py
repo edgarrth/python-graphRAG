@@ -425,6 +425,7 @@ def render_left_navigation(service_ready: bool, readiness: dict[str, Any]) -> No
             "<span class='tech-pill'>Vector</span>"
             "<span class='tech-pill'>Full-text</span>"
             "<span class='tech-pill'>Graph</span>"
+            "<span class='tech-pill'>GraphSAGE</span>"
             "<span class='tech-pill'>SSE</span>"
             "</div>",
             unsafe_allow_html=True,
@@ -436,6 +437,48 @@ def render_left_navigation(service_ready: bool, readiness: dict[str, Any]) -> No
         if provider == "openai" and not key_configured:
             runtime += " · API key ausente"
         st.caption(f"Generación activa: **{runtime}**")
+        with st.expander("GraphSAGE · pagos similares", expanded=False):
+            st.caption("Entrena un modelo neuronal con el grafo de pagos y busca vecinos estructurales.")
+            if service_ready:
+                try:
+                    neural = ApiClient().graphsage_status()
+                    st.caption(
+                        f"Embeddings: {neural['embedded_payments']}/{neural['payment_count']} "
+                        f"pagos · {'listo' if neural['ready'] else 'sin entrenar'}"
+                    )
+                except httpx.HTTPError as exc:
+                    st.warning(f"Estado GraphSAGE no disponible: {exc}")
+                epochs = st.slider("Épocas de entrenamiento", 1, 20, 5, key="sage-epochs")
+                dimension = st.select_slider(
+                    "Dimensión embedding", options=[8, 16, 32, 64], value=32,
+                    key="sage-dimension",
+                )
+                if st.button("Entrenar GraphSAGE", key="sage-train", width="stretch"):
+                    with st.spinner("Entrenando GraphSAGE sobre Neo4j GDS…"):
+                        try:
+                            result = ApiClient().graphsage_train(epochs, dimension)
+                            st.success(
+                                f"Modelo entrenado: {result['embedded_payments']} pagos, "
+                                f"{result['embedding_dimension']} dimensiones."
+                            )
+                        except httpx.HTTPError as exc:
+                            st.error(f"No se pudo entrenar GraphSAGE: {exc}")
+                payment_id = st.text_input(
+                    "ID de pago", value="PAY-1007", key="sage-payment",
+                )
+                if st.button("Buscar pagos similares", key="sage-search", width="stretch"):
+                    try:
+                        matches = ApiClient().graphsage_similar(payment_id.strip())
+                        if matches["neighbors"]:
+                            st.dataframe(matches["neighbors"], hide_index=True)
+                        else:
+                            st.info("No se encontraron vecinos con el filtro actual.")
+                    except httpx.HTTPError as exc:
+                        st.error(f"Consulta neuronal fallida: {exc}")
+                st.caption(
+                    "La similitud coseno de GraphSAGE no demuestra una causa raíz compartida. "
+                    "Para combinarla con GraphRAG usa neural_payment_id en la API."
+                )
 
         if st.button("＋ Nuevo chat", type="primary", width="stretch"):
             new_conversation()

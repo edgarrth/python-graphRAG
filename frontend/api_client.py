@@ -71,3 +71,26 @@ class ApiClient:
         )
         response.raise_for_status()
         return response.json()
+
+    def graphsage_status(self) -> dict[str, Any]:
+        response = httpx.get(f"{self.base_url}/api/v1/graphsage/status", timeout=15)
+        response.raise_for_status()
+        return response.json()
+
+    def graphsage_train(self, epochs: int, embedding_dimension: int) -> dict[str, Any]:
+        response = httpx.post(
+            f"{self.base_url}/api/v1/graphsage/train",
+            json={"epochs": epochs, "embedding_dimension": embedding_dimension},
+            timeout=600,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def graphsage_similar(self, payment_id: str, top_k: int = 5) -> dict[str, Any]:
+        response = httpx.get(
+            f"{self.base_url}/api/v1/graphsage/payments/{payment_id}/similar",
+            params={"top_k": top_k},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()

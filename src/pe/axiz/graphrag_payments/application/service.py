@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from types import SimpleNamespace
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
@@ -10,8 +11,10 @@ if TYPE_CHECKING:
 
 from pe.axiz.graphrag_payments.application.generation import AnswerGenerator
 from pe.axiz.graphrag_payments.domain.models import (
+    ContextItem,
     GraphEdge,
     GraphNode,
+    GraphSageNeighbor,
     GraphRagQueryRequest,
     GraphRagQueryResponse,
     PaymentGraphResponse,
@@ -34,6 +37,44 @@ class GraphRagService:
         self._retriever = retriever
         self._generator = generator
 
+    def _neural_retrieve(
+        self, request: GraphRagQueryRequest, top_k: int
+    ) -> tuple[Any, list[GraphSageNeighbor]]:
+        """Keep exact-code and hybrid retrieval; add opt-in structural evidence."""
+        retrieval = self._get_retriever().search(request.question, top_k)
+        if not request.neural_payment_id:
+            return retrieval, []
+        from pe.axiz.graphrag_payments.application.graphsage import GraphSageService
+
+        result = GraphSageService(self._driver, self._settings).similar(
+            request.neural_payment_id, top_k=min(5, top_k)
+        )
+        neighbors = result.neighbors
+        if neighbors:
+            # A top_k=1 explicit-code query must NEVER lose its exact-code anchor.
+            reserve_slot = top_k > 1 or not getattr(retrieval, "explicit_reason_codes", [])
+            if not reserve_slot:
+                return retrieval, neighbors
+            evidence = ContextItem(
+                chunk_id=f"GRAPHSAGE:{request.neural_payment_id}",
+                title=f"Similitud estructural GraphSAGE de {request.neural_payment_id}",
+                text=(
+                    "Los vecinos enumerados fueron identificados mediante similitud coseno entre "
+                    "embeddings de GraphSAGE; no prueban una causa raíz compartida, fraude ni "
+                    "relación causal. Contrasta los códigos, comercios y adquirentes observados."
+                ),
+                score=neighbors[0].similarity,
+                source="graphsage",
+                neural_matches=neighbors,
+            )
+            # Preserve existing evidence ordering, especially exact reason-code anchors.
+            retrieval = SimpleNamespace(
+                contexts=[*retrieval.contexts[: max(0, top_k - 1)], evidence],
+                strategy=str(getattr(retrieval, "strategy", "hybrid")) + "+graphsage",
+                explicit_reason_codes=list(getattr(retrieval, "explicit_reason_codes", [])),
+            )
+        return retrieval, neighbors
+
     def _resolve_top_k(self, request: GraphRagQueryRequest) -> int:
         top_k = request.top_k or self._settings.default_top_k
         return min(top_k, self._settings.max_top_k)
@@ -47,7 +88,9 @@ class GraphRagService:
             self._retriever = retriever
         return retriever
 
-    def _trace(self, top_k: int, retrieval: Any) -> RetrievalTrace:
+    def _trace(
+        self, top_k: int, retrieval: Any, payment_id: str | None = None, neural_matches: int = 0
+    ) -> RetrievalTrace:
         contexts = getattr(retrieval, "contexts", [])
         return RetrievalTrace(
             retriever="HybridCypherRetriever",
@@ -63,11 +106,13 @@ class GraphRagService:
             effective_search_ratio=self._settings.effective_search_ratio,
             retrieval_strategy=str(getattr(retrieval, "strategy", "hybrid")),
             explicit_reason_codes=list(getattr(retrieval, "explicit_reason_codes", [])),
+            neural_payment_id=payment_id,
+            neural_matches=neural_matches,
         )
 
     def query(self, request: GraphRagQueryRequest) -> GraphRagQueryResponse:
         top_k = self._resolve_top_k(request)
-        retrieval = self._get_retriever().search(request.question, top_k)
+        retrieval, neighbors = self._neural_retrieve(request, top_k)
         answer = self._generator.generate(request.question, retrieval.contexts)
         contexts = retrieval.contexts if request.include_context else []
         return GraphRagQueryResponse(
@@ -78,7 +123,8 @@ class GraphRagService:
                 self._settings.openai_model if self._settings.generation_provider == "openai" else None
             ),
             contexts=contexts,
-            trace=self._trace(top_k, retrieval),
+            trace=self._trace(top_k, retrieval, request.neural_payment_id, len(neighbors)),
+            neural_neighbors=neighbors,
         )
 
     def query_stream(self, request: GraphRagQueryRequest) -> Iterator[dict[str, Any]]:
@@ -91,15 +137,16 @@ class GraphRagService:
         }
 
         retrieval_started = perf_counter()
-        retrieval = self._get_retriever().search(request.question, top_k)
+        retrieval, neighbors = self._neural_retrieve(request, top_k)
         retrieval_ms = round((perf_counter() - retrieval_started) * 1000, 1)
-        trace = self._trace(top_k, retrieval)
+        trace = self._trace(top_k, retrieval, request.neural_payment_id, len(neighbors))
         yield {
             "event": "retrieval",
             "data": {
                 "message": "Contexto híbrido recuperado y grafo expandido.",
                 "retrieval_ms": retrieval_ms,
                 "trace": trace.model_dump(mode="json"),
+                "neural_neighbors": [n.model_dump(mode="json") for n in neighbors],
                 "contexts": (
                     [item.model_dump(mode="json") for item in retrieval.contexts]
                     if request.include_context
@@ -138,6 +185,7 @@ class GraphRagService:
             ),
             contexts=retrieval.contexts if request.include_context else [],
             trace=trace,
+            neural_neighbors=neighbors,
         )
         yield {
             "event": "complete",
