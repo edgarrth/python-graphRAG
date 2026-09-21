@@ -11,6 +11,7 @@ from neo4j_graphrag.embeddings.sentence_transformers import SentenceTransformerE
 
 from pe.axiz.graphrag_payments.infrastructure.schema import build_schema_statements
 from synthetic_payments import generate_synthetic_payments
+from benchmark_case import generate_benchmark_payments
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "datasets" / "data"
@@ -120,6 +121,8 @@ def load_knowledge(driver: Any, embedder: SentenceTransformerEmbeddings) -> None
 def load_payments(driver: Any) -> None:
     synthetic_count = int(os.getenv("SYNTHETIC_PAYMENT_COUNT", "320"))
     payments = [*load_json("payments.json"), *generate_synthetic_payments(synthetic_count)]
+    if os.getenv("ENABLE_BENCHMARK_DATA", "true").lower() in {"1", "true", "yes"}:
+        payments.extend(generate_benchmark_payments())
     for item in payments:
         driver.execute_query(
             """
