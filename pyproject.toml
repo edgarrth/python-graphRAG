@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "axiz-pe-graphrag-payments-poc"
-version = "1.5.5"
+version = "1.7.3"
 description = "GraphRAG PoC for payment-processing incident investigation using Neo4j"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"

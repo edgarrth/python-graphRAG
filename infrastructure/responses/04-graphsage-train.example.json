@@ -1,0 +1,11 @@
+{
+  "model_name": "payments_graphsage_v1",
+  "graph_name": "payments_graphsage",
+  "graph_nodes": 370,
+  "graph_relationships": 2020,
+  "embedded_payments": 344,
+  "embedding_dimension": 32,
+  "train_millis": 1200,
+  "trained_at": "2026-09-19T12:00:00+00:00",
+  "epoch_losses": [1.7, 1.3, 1.1]
+}

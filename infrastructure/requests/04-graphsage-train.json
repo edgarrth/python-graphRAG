@@ -1,0 +1,6 @@
+{
+  "embedding_dimension": 32,
+  "sample_sizes": [10, 5],
+  "epochs": 5,
+  "seed": 42
+}

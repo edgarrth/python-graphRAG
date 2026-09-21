@@ -10,6 +10,7 @@ from neo4j import GraphDatabase
 from neo4j_graphrag.embeddings.sentence_transformers import SentenceTransformerEmbeddings
 
 from pe.axiz.graphrag_payments.infrastructure.schema import build_schema_statements
+from synthetic_payments import generate_synthetic_payments
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "datasets" / "data"
@@ -117,7 +118,9 @@ def load_knowledge(driver: Any, embedder: SentenceTransformerEmbeddings) -> None
 
 
 def load_payments(driver: Any) -> None:
-    for item in load_json("payments.json"):
+    synthetic_count = int(os.getenv("SYNTHETIC_PAYMENT_COUNT", "320"))
+    payments = [*load_json("payments.json"), *generate_synthetic_payments(synthetic_count)]
+    for item in payments:
         driver.execute_query(
             """
             MERGE (customer:Customer {customer_id: $customer_id})

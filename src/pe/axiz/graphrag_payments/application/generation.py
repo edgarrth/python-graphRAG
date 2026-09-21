@@ -56,8 +56,21 @@ class DeterministicGroundedGenerator(AnswerGenerator):
                 for p in payments[:3]
             )
             parts.append(f"Pagos conectados que sirven como evidencia: {examples}.")
+        neural = [neighbor for item in contexts for neighbor in item.neural_matches]
+        if neural:
+            examples = ", ".join(
+                f"{neighbor.payment_id} (coseno {neighbor.similarity:.3f}; "
+                f"código {neighbor.reason_code or 'ninguno'}; "
+                f"adquirente {neighbor.acquirer or 'sin datos'})"
+                for neighbor in neural[:5]
+            )
+            parts.append(
+                "Pagos próximos según embeddings GraphSAGE: " + examples +
+                ". La similitud del embedding NO prueba causa raíz, fraude ni causalidad."
+            )
         parts.append(
-            "La respuesta se limita al contexto recuperado por búsqueda híbrida y expansión del grafo; "
+            "La respuesta se limita al contexto recuperado y a los vecinos neuronales "
+            "cuando fueron solicitados; "
             "no se agregaron hechos externos."
         )
         return " ".join(parts)
@@ -88,7 +101,12 @@ class OpenAIGroundedGenerator(AnswerGenerator):
                     "de copiar uno solo. Si la pregunta menciona explícitamente un código de respuesta "
                     "o rechazo, prioriza la evidencia cuyo ReasonCode coincida exactamente con ese código "
                     "y no lo sustituyas por otro código relacionado. Si la evidencia no alcanza, dilo "
-                    "explícitamente. No inventes causas, métricas ni acciones."
+                    "explícitamente. Los vecinos con source=graphsage son únicamente similitud "
+                    "estructural neuronal, NO prueban causa común, causalidad, fraude ni riesgo. "
+                    "Si el usuario pide pagos relacionados, diferencia las relaciones directas "
+                    "verificadas del grafo de la similitud estimada por GraphSAGE; no las equipares. "
+                    "Indica sus identificadores y scores solo cuando consten en el contexto. "
+                    "No inventes causas, métricas ni acciones."
                 ),
             },
             {

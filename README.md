@@ -1,8 +1,19 @@
-# GraphRAG Payments PoC
+# GraphRAG Payments
+
+PoC técnica en Python para demostrar una arquitectura **GraphRAG (Graph Retrieval-Augmented Generation)** 
+sobre un caso funcional de **payment processing**: investigación de rechazos, timeouts y controles operativos de pagos.
 
 
-PoC para demostrar una arquitectura **GraphRAG (Graph Retrieval-Augmented Generation)** sobre un caso funcional de 
-**payment processing**: investigación de rechazos, timeouts y controles operativos de pagos.
+```bash
+docker compose --env-file .env -f infrastructure/docker-compose.yml up -d --build --no-deps
+```
+
+Para observar la actividad del chat (sin exponer tu clave OpenAI):
+
+```bash
+# Ejecución continua hasta Ctrl+C.
+docker compose -f infrastructure/docker-compose.yml logs -f frontend api
+```
 
 El foco no es construir un procesador de pagos completo. El objetivo es probar, de extremo a extremo, que una consulta en lenguaje natural puede:
 
@@ -31,11 +42,26 @@ La PoC usa `HybridCypherRetriever` del paquete oficial `neo4j-graphrag` para com
 
 La documentación oficial de Neo4j describe `HybridCypherRetriever` precisamente como un retriever que busca por vector + full-text y luego ejecuta una consulta Cypher para recorrer más contexto del grafo.
 
+### Características técnicas probadas
+
+| Capacidad | Cómo se demuestra |
+|---|---|
+| Vector search | Índice `knowledge_embedding` en `KnowledgeChunk.embedding` |
+| Full-text search | Índice `knowledge_fulltext` sobre `KnowledgeChunk.search_text` |
+| Retrieval híbrido | `HybridCypherRetriever` combina ambos índices con ranker `linear`, peso vectorial configurable y un candidate pool ampliado |
+| Exact reason-code anchoring | Si la pregunta nombra explícitamente `código 05/51/91/...`, Neo4j recupera primero los chunks conectados exactamente a ese `ReasonCode` y luego completa con retrieval híbrido |
+| Graph traversal | Cypher expande desde conocimiento a códigos y pagos relacionados |
+| Grounding | La respuesta se arma exclusivamente con contextos recuperados |
+| Trazabilidad | API devuelve retriever, índices, expansión, ranking y contextos |
+| Streaming reactivo | SSE (`text/event-stream`) emite etapas de retrieval, deltas del LLM y evento final |
+| Ejecución sin credenciales externas | `GENERATION_PROVIDER=deterministic` por defecto |
+| Generación con LLM real | Opcional con `GENERATION_PROVIDER=openai` y `OPENAI_API_KEY` |
+
 ---
 
 ## 2. Caso de uso funcional: investigación de payment processing
 
-El dataset ampliado simula **24 pagos**, **5 comercios**, **2 adquirentes** y **15 chunks de conocimiento**. Incluye aprobaciones, rechazos, fallas técnicas, controles antifraude y estados operativos como:
+El dataset original contiene **24 pagos**, **5 comercios**, **2 adquirentes** y **15 chunks de conocimiento**. La carga agrega por defecto **320 pagos ficticios reproducibles** para ejercitar GraphSAGE (`SYNTHETIC_PAYMENT_COUNT=0` desactiva la ampliación). Incluye aprobaciones, rechazos, fallas técnicas, controles antifraude y estados operativos como:
 
 - `05`: do not honor;
 - `51`: fondos insuficientes;
@@ -55,7 +81,8 @@ Ejemplo de pregunta:
 ¿Por qué se rechazan pagos con código 05 y qué debería revisar operaciones?
 ```
 
-La PoC recupera el conocimiento que explica el código y expande el grafo hacia los pagos conectados, mostrando comercio, adquirente, monto y estado como evidencia adicional.
+La PoC recupera el conocimiento que explica el código y expande el grafo hacia los pagos conectados, mostrando comercio, 
+adquirente, monto y estado como evidencia adicional.
 
 ---
 
@@ -151,7 +178,6 @@ Es el único mecanismo de inicialización de datos/esquema. Es idempotente y cre
 
 ## 6. Tecnologías y versiones
 
-La PoC apunta a **Python 3.13**. Las dependencias directas se fijan para hacer la ejecución reproducible y fueron seleccionadas sobre versiones estables actuales al 18-09-2026:
 
 | Tecnología | Versión |
 |---|---:|
@@ -170,8 +196,6 @@ La PoC apunta a **Python 3.13**. Las dependencias directas se fijan para hacer l
 | pytest | 9.1.1 |
 | Ruff | 0.16.8 |
 
-`neo4j-graphrag 1.19.0` soporta Python 3.13 y declara `neo4j >=5.28.4,<7`, `pydantic >=2.6.3,<3`, `sentence-transformers >=3,<4` y `openai >=1.51.1,<2`. Por eso se usan `sentence-transformers 3.4.1` y `openai 1.109.1`: son las últimas versiones de sus respectivas ramas que permanecen dentro de los rangos soportados por GraphRAG 1.19.0. No se usan las versiones absolutas más nuevas 6.x/3.x porque romperían la resolución de dependencias.
-
 ---
 
 ## 7. Modelo de grafo
@@ -186,8 +210,8 @@ erDiagram
     KNOWLEDGE_CHUNK }o--o{ REASON_CODE : EXPLAINS
 ```
 
-El índice vectorial y full-text se aplican a `KnowledgeChunk`; la evidencia transaccional se obtiene navegando relaciones, 
-no duplicándola dentro del texto embebido.
+El índice vectorial y full-text se aplican a `KnowledgeChunk`; la evidencia transaccional se obtiene navegando 
+relaciones, no duplicándola dentro del texto embebido.
 
 ---
 
@@ -208,13 +232,6 @@ Swagger/OpenAPI queda disponible en `http://localhost:8000/docs`.
 
 ## 9. Levantar infraestructura y aplicación
 
-### Prerrequisitos
-
-- Docker Desktop / Docker Engine con Docker Compose v2.
-- Aproximadamente 2–3 GB libres para imágenes, dependencias ML CPU y modelo de embeddings.
-- La primera ejecución necesita acceso a Internet para descargar la imagen de Neo4j, dependencias Python y el modelo de Sentence Transformers.
-- Para ejecución local fuera de Docker se recomienda `uv`; Docker Compose no lo requiere.
-
 Desde la raíz del proyecto:
 
 ```bash
@@ -226,7 +243,11 @@ Luego:
 ```bash
 docker compose -f infrastructure/docker-compose.yml up --build
 ```
-El flujo de arranque es secuencial:
+
+En el primer `--build` todavía se descargarán Python, PyTorch CPU, GraphRAG y Sentence Transformers, por lo que 
+puede tardar varios minutos según la conexión. En rebuilds posteriores, Docker reutiliza las capas si `pyproject.toml` no cambió.
+
+El flujo de arranque es deliberadamente secuencial:
 
 1. `neo4j` inicia;
 2. `dataset-loader` espera a Neo4j, crea constraints/índices y carga datos + embeddings;
@@ -234,7 +255,7 @@ El flujo de arranque es secuencial:
 4. `frontend` inicia cuando la API está saludable.
 
 
-### 9.1 Qué esperar del primer build
+### 9.1 Primer build
 
 La primera ejecución es la más costosa porque debe descargar las imágenes base y las dependencias ML. Para ver el detalle del progreso:
 
@@ -247,8 +268,6 @@ Luego levante los servicios sin reconstruir:
 ```bash
 docker compose -f infrastructure/docker-compose.yml up
 ```
-
-Para comprobar que Docker está reutilizando caché en una reconstrucción, las etapas de instalación de PyTorch/dependencias deberían aparecer como `CACHED` mientras `pyproject.toml` permanezca sin cambios.
 
 Servicios:
 
@@ -442,6 +461,37 @@ curl -s -X POST http://localhost:8000/api/v1/graphrag/query \
 
 Se espera recuperar conocimiento asociado a indisponibilidad (`91`) y/o ruteo/latencia, junto con pagos relacionados por el grafo.
 
+### Test 7 — idempotencia
+
+Demuestra que la misma arquitectura puede recuperar conocimiento de un control técnico que no depende de un rechazo ISO tradicional.
+
+```bash
+curl -s -X POST http://localhost:8000/api/v1/graphrag/query \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "question":"¿Cómo evito cobros duplicados cuando el cliente reintenta por un timeout?",
+    "top_k":4,
+    "include_context":true
+  }'
+```
+
+### Test 8 — streaming SSE
+
+Demuestra el flujo reactivo que consume el frontend. `curl -N` desactiva el buffering de salida para ver los eventos a medida que llegan.
+
+```bash
+curl -N -X POST http://localhost:8000/api/v1/graphrag/query/stream \
+  -H 'Accept: text/event-stream' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "question":"¿Cómo evito cobros duplicados cuando el cliente reintenta por un timeout?",
+    "top_k":4,
+    "include_context":true
+  }'
+```
+
+La secuencia esperada es: `event: stage`, `event: retrieval`, múltiples `event: delta` y finalmente `event: complete`.
+
 ### Otras preguntas útiles para probar el corpus
 
 - `¿Qué significa el código 54 y debo reintentar con la misma tarjeta?`
@@ -519,3 +569,78 @@ Build del paquete:
 ```bash
 uv build
 ```
+
+---
+
+## 13. GraphSAGE: entrenamiento real y consultas neuronales
+
+GraphSAGE aprende embeddings de nodos mediante agregación de vecinos en un grafo proyectado de
+`Payment`, `Merchant`, `Acquirer` y `ReasonCode`. Los tipos de relaciones proyectados se tratan
+como no dirigidos (`AT_MERCHANT`, `ROUTED_TO`, `FAILED_WITH`) para que los pagos incorporen señales
+de su vecindario. Se crea una propiedad numérica de **10 dimensiones** (`sage_features`) con
+indicadores de tipo de nodo, importe normalizado, estado del pago y categorías técnicas de códigos.
+No se utilizan identificadores de cliente ni dígitos de tarjeta como atributos del modelo.
+
+Se ejecutan los procedimientos GDS **`gds.graph.project` → `gds.beta.graphSage.train` →
+`gds.beta.graphSage.write`**. El entrenamiento es no supervisado y utiliza embeddings de
+**32 dimensiones** por defecto, dos capas de agregación (`sampleSizes: [10, 5]`), `mean`,
+semilla 42 y 5 épocas. Los vectores se persisten en `Payment.sage_embedding`; el nombre del
+modelo y metadatos se conservan en `GraphSageRun`. Los grafos y modelos del catálogo de GDS son
+temporales y desaparecen tras reiniciar Neo4j; los vectores **sí** permanecen en la base.
+Para reentrenar (p. ej. tras agregar nuevos pagos) ejecuta de nuevo el endpoint de entrenamiento.
+
+**Ejecutar desde la raíz del repositorio:**
+
+```bash
+docker compose -f infrastructure/docker-compose.yml up -d --build
+# Comprobar que el cargador finalizó y Neo4j esté listo:
+docker compose -f infrastructure/docker-compose.yml ps
+# Consultar el estado antes de entrenar:
+curl -s http://localhost:8000/api/v1/graphsage/status
+# Entrenar GraphSAGE desde FastAPI (puede tomar varios minutos en una máquina modesta):
+curl -s -X POST http://localhost:8000/api/v1/graphsage/train \
+  -H 'Content-Type: application/json' \
+  --data @infrastructure/requests/04-graphsage-train.json
+# Vecinos neuronales de un pago del dataset original:
+curl -s 'http://localhost:8000/api/v1/graphsage/payments/PAY-1007/similar?top_k=5'
+# Neural GraphRAG: añade al contexto los vecinos neuronales encontrados:
+curl -s -X POST http://localhost:8000/api/v1/graphrag/query \
+  -H 'Content-Type: application/json' \
+  --data @infrastructure/requests/06-graphrag-neural.json
+```
+
+También se abrir `http://localhost:8501`, expandir **GraphSAGE · pagos similares** en la
+barra lateral, entrenar y consultar un pago. El chat habitual permanece sin cambios; el modo
+Neural GraphRAG se habilita expresamente enviando `neural_payment_id` en la petición REST o SSE.
+La respuesta muestra vecinos y similitud coseno en `neural_neighbors`, un contexto con
+`source=graphsage` y estadísticas en `trace.neural_matches`. Cuando la pregunta contiene un código
+explícito, se conserva el anclaje exacto antes de insertar la evidencia neuronal.
+
+### Contratos y fallos esperados
+
+| Endpoint | Función |
+|---|---|
+| `GET /api/v1/graphsage/status` | Contabiliza pagos con embeddings y lee metadatos de entrenamiento. |
+| `POST /api/v1/graphsage/train` | Prepara features, proyecta grafo, entrena, escribe embeddings y registra métricas. |
+| `GET /api/v1/graphsage/payments/{payment_id}/similar?top_k=5&min_similarity=0.0` | Similitud coseno y evidencias de vecinos; 404 si el pago no existe y 409 si no hay embeddings. |
+| `POST /api/v1/graphrag/query` con `neural_payment_id` | Añade los vecinos al contexto y explica su carácter de similitud, no de causalidad. |
+
+El entrenamiento devuelve 503 cuando GDS no está disponible o el grafo de pagos está vacío.
+Los JSON en `infrastructure/responses/04-*` y `05-*` son **solo ejemplos de contrato**, no
+resultados de entrenamiento medidos. Los 24 pagos originales y los ejemplos sintéticos no
+constituyen un conjunto de evaluación de fraude ni validan identificación de causas raíz. La
+similitud coseno mide proximidad de embeddings, **no una probabilidad de incidente**.
+
+En Docker Compose, `NEO4J_PLUGINS='["graph-data-science"]'` habilita GDS en el Neo4j existente,
+sin nuevos servicios de base de datos. La primera inicialización requiere conectividad a los
+repositorios de plugins y al modelo de embeddings de Sentence Transformers; el volumen
+`neo4j_plugins` conserva el JAR descargado. El endpoint de entrenamiento no tiene autenticación:
+**utiliza la PoC únicamente en un entorno local de desarrollo**; añade autorización si la expones.
+
+### Ejemplos en el chat
+
+1. «¿Qué ocurrió con PAY-1008?» → GraphRAG tradicional; registra la referencia
+   de esa conversación.
+2. «¿Y otros pagos parecidos?» → GraphRAG + GraphSAGE para `PAY-1008`.
+3. «¿Qué significa el código 91?» → GraphRAG tradicional, sin consulta neuronal.
+4. «Busca pagos similares a PAY-1007» → GraphRAG + GraphSAGE para `PAY-1007`.

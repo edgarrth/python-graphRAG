@@ -1,0 +1,6 @@
+{
+  "question": "¿Qué otros pagos muestran un patrón estructural similar al pago PAY-1007?",
+  "top_k": 4,
+  "include_context": true,
+  "neural_payment_id": "PAY-1007"
+}

@@ -1,0 +1,16 @@
+{
+  "payment_id": "PAY-1007",
+  "model_name": "payments_graphsage_v1",
+  "neighbors": [
+    {
+      "payment_id": "SYN-00001",
+      "similarity": 0.91,
+      "status": "DECLINED",
+      "amount": 199.9,
+      "currency": "PEN",
+      "merchant": "TechStore Perú",
+      "acquirer": "Lima Payments",
+      "reason_code": "91"
+    }
+  ]
+}

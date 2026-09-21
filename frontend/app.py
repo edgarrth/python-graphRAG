@@ -4,6 +4,7 @@ import inspect
 from collections import OrderedDict
 from datetime import UTC, datetime
 from html import escape
+import logging
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -11,7 +12,11 @@ from uuid import uuid4
 import httpx
 import streamlit as st
 from api_client import ApiClient
-from ui_helpers import EXAMPLE_QUESTIONS, conversation_group, conversation_title, trace_rows
+from chat_flow import plan_turn
+from ui_helpers import EXAMPLE_QUESTIONS, conversation_group, conversation_title, graphsage_usage, trace_rows
+
+LOGGER = logging.getLogger("axiz.graphrag.frontend")
+logging.basicConfig(level=logging.INFO)
 
 APP_DIR = Path(__file__).resolve().parent
 ASSET_DIR = APP_DIR / "assets"
@@ -35,11 +40,16 @@ for key, default in {
     "conversations": {},
     "current_conversation_id": None,
     "pending_question": None,
+    "submitted_chat_question": None,
     "pending_request": None,
     "show_trace": True,
     "show_query_progress": True,
     "show_evidence": True,
     "top_k": 4,
+    "retrieval_mode": "Neural GraphRAG inteligente",
+    "pending_conversation_payment_id": None,
+    "pending_retrieval_mode": "traditional",
+    "pending_conversation_id": None,
     "left_sidebar_collapsed": False,
     "scroll_nonce": 0,
 }.items():
@@ -351,6 +361,7 @@ def new_conversation() -> str:
         "created_at": now,
         "updated_at": now,
         "messages": [],
+        "last_payment_id": None,
     }
     st.session_state.current_conversation_id = conversation_id
     return conversation_id
@@ -385,6 +396,7 @@ def delete_conversation(conversation_id: str) -> None:
 def clear_current_conversation() -> None:
     conversation = current_conversation()
     conversation["messages"] = []
+    conversation["last_payment_id"] = None
     conversation["title"] = "Nueva conversación"
     conversation["updated_at"] = datetime.now(UTC)
 
@@ -425,6 +437,7 @@ def render_left_navigation(service_ready: bool, readiness: dict[str, Any]) -> No
             "<span class='tech-pill'>Vector</span>"
             "<span class='tech-pill'>Full-text</span>"
             "<span class='tech-pill'>Graph</span>"
+            "<span class='tech-pill'>GraphSAGE</span>"
             "<span class='tech-pill'>SSE</span>"
             "</div>",
             unsafe_allow_html=True,
@@ -436,6 +449,51 @@ def render_left_navigation(service_ready: bool, readiness: dict[str, Any]) -> No
         if provider == "openai" and not key_configured:
             runtime += " · API key ausente"
         st.caption(f"Generación activa: **{runtime}**")
+        with st.expander("GraphSAGE · administración y pruebas", expanded=False):
+            st.caption(
+                "Panel técnico: entrena el modelo o prueba directamente la similitud entre pagos. "
+                "Para consultar en lenguaje natural, utiliza el chat central: no necesitas ingresar aquí el ID."
+            )
+            if service_ready:
+                try:
+                    neural = ApiClient().graphsage_status()
+                    st.caption(
+                        f"Embeddings: {neural['embedded_payments']}/{neural['payment_count']} "
+                        f"pagos · {'listo' if neural['ready'] else 'sin entrenar'}"
+                    )
+                except httpx.HTTPError as exc:
+                    st.warning(f"Estado GraphSAGE no disponible: {exc}")
+                epochs = st.slider("Épocas de entrenamiento", 1, 20, 5, key="sage-epochs")
+                dimension = st.select_slider(
+                    "Dimensión embedding", options=[8, 16, 32, 64], value=32,
+                    key="sage-dimension",
+                )
+                if st.button("Entrenar GraphSAGE", key="sage-train", width="stretch"):
+                    with st.spinner("Entrenando GraphSAGE sobre Neo4j GDS…"):
+                        try:
+                            result = ApiClient().graphsage_train(epochs, dimension)
+                            st.success(
+                                f"Modelo entrenado: {result['embedded_payments']} pagos, "
+                                f"{result['embedding_dimension']} dimensiones."
+                            )
+                        except httpx.HTTPError as exc:
+                            st.error(f"No se pudo entrenar GraphSAGE: {exc}")
+                payment_id = st.text_input(
+                    "ID de pago", value="PAY-1007", key="sage-payment",
+                )
+                if st.button("Buscar pagos similares", key="sage-search", width="stretch"):
+                    try:
+                        matches = ApiClient().graphsage_similar(payment_id.strip())
+                        if matches["neighbors"]:
+                            st.dataframe(matches["neighbors"], hide_index=True)
+                        else:
+                            st.info("No se encontraron vecinos con el filtro actual.")
+                    except httpx.HTTPError as exc:
+                        st.error(f"Consulta neuronal fallida: {exc}")
+                st.caption(
+                    "La similitud coseno de GraphSAGE no demuestra una causa raíz compartida. "
+                    "El chat inteligente puede activar GraphSAGE automáticamente al pedir similitud."
+                )
 
         if st.button("＋ Nuevo chat", type="primary", width="stretch"):
             new_conversation()
@@ -517,13 +575,27 @@ def render_right_settings() -> None:
     with st.container(key="right_settings_panel"):
         st.markdown("<div class='panel-title'>Configuración</div>", unsafe_allow_html=True)
         st.markdown(
-            "<div class='panel-subtitle'>Ajustes de recuperación y visualización de esta sesión.</div>",
+            "<div class='panel-subtitle'>Ajustes del agente.</div>",
             unsafe_allow_html=True,
         )
 
-        st.markdown("**GraphRAG**")
+        st.markdown("**Recuperación**")
+        st.selectbox(
+            "Modo",
+            options=["Neural GraphRAG inteligente", "GraphRAG tradicional"],
+            key="retrieval_mode",
+            help=(
+                "Inteligente: combina GraphRAG con GraphSAGE al pedir pagos similares o relacionados. "
+                "Tradicional: solo búsqueda híbrida y relaciones del grafo."
+            ),
+        )
+        if st.session_state.retrieval_mode == "Neural GraphRAG inteligente":
+            st.caption("Con un ID: similares/relacionados → +GraphSAGE.")
+            reference = current_conversation().get("last_payment_id")
+            st.caption(f"Pago actual: **{reference or '—'}**")
+        st.markdown("**Búsqueda**")
         st.session_state.top_k = st.slider(
-            "Top K de recuperación",
+            "Contextos (Top K)",
             min_value=1,
             max_value=10,
             value=int(st.session_state.top_k),
@@ -553,8 +625,7 @@ def render_right_settings() -> None:
 
         st.markdown(
             "<div class='settings-note'>"
-            "El historial vive solo en la sesión de Streamlit; no se agrega infraestructura "
-            "adicional porque no es necesaria para demostrar GraphRAG."
+            "Historial disponible durante esta sesión."
             "</div>",
             unsafe_allow_html=True,
         )
@@ -623,6 +694,14 @@ def render_trace(trace: dict[str, Any] | None) -> None:
 
 
 def render_assistant_payload(payload: dict[str, Any]) -> None:
+    # Always explain whether the neural model actually ran, including when
+    # retrieval is disabled, the question does not request it, or GDS is down.
+    trace = payload.get("trace") or {}
+    usage = graphsage_usage(trace)
+    if trace.get("neural_route") == "unavailable":
+        st.warning(usage)
+    else:
+        st.caption(usage)
     if not st.session_state.show_trace and not st.session_state.show_evidence:
         return
     with st.expander("Actividad técnica de GraphRAG", expanded=False):
@@ -648,6 +727,13 @@ def render_assistant_payload(payload: dict[str, Any]) -> None:
             render_trace(payload.get("trace"))
         else:
             render_contexts(payload.get("contexts", []))
+        if st.session_state.show_evidence and payload.get("neural_neighbors"):
+            st.markdown("**Vecinos estructurales GraphSAGE**")
+            st.caption(
+                "Estos pagos presentan similitud de embeddings; no se confirma "
+                "que compartan la misma causa del incidente."
+            )
+            st.dataframe(payload["neural_neighbors"], hide_index=True, width="stretch")
 
 
 def render_message(message: dict[str, Any]) -> None:
@@ -658,6 +744,20 @@ def render_message(message: dict[str, Any]) -> None:
         payload = message.get("payload")
         if payload:
             render_assistant_payload(payload)
+
+
+def queue_chat_question(widget_key: str) -> None:
+    """Persist chat input in the submit callback before the widget clears it."""
+    value = st.session_state.get(widget_key)
+    if isinstance(value, str) and value.strip():
+        st.session_state.submitted_chat_question = value.strip()
+        LOGGER.info("Chat question submitted; queued for dispatch")
+
+
+def queue_example_question(question: str) -> None:
+    """Queue example in widget callback before Streamlit reruns the page."""
+    st.session_state.pending_question = question
+    LOGGER.info("Example question selected; queued for dispatch")
 
 
 def render_empty_state() -> None:
@@ -686,8 +786,10 @@ def render_empty_state() -> None:
             for index, question in enumerate(EXAMPLE_QUESTIONS):
                 column = left_column if index % 2 == 0 else right_column
                 with column:
-                    if st.button(question, key=f"example-{index}", width="stretch"):
-                        st.session_state.pending_question = question
+                    st.button(
+                        question, key=f"example-{index}", width="stretch",
+                        on_click=queue_example_question, args=(question,),
+                    )
 
 
 
@@ -781,23 +883,34 @@ def render_scroll_driver(conversation_id: str) -> None:
             )
 
 
-def render_streaming_assistant(client: ApiClient, question: str) -> None:
-    """Render one pending GraphRAG request using the API SSE stream."""
+def render_streaming_assistant(
+    client: ApiClient, question: str,
+    *, retrieval_mode: str = "traditional", conversation_payment_id: str | None = None,
+) -> None:
+    """Stream the original retrieval or conversational automatic GraphSAGE route."""
     # This marker immediately suppresses any stale empty-state DOM left from
     # the previous render while the long-lived SSE run is still in progress.
     st.html('<div class="stream-active-marker" aria-hidden="true"></div>')
     with st.chat_message("assistant", avatar=APP_ICON):
-        progress = None
         stream_state: dict[str, Any] = {"payload": None}
 
-        if st.session_state.show_query_progress:
-            progress = st.status("Recuperando contexto GraphRAG…", expanded=False)
+        # Busy feedback is ALWAYS visible, even when technical progress details
+        # are disabled. Both modes use the same stream/UI lifecycle.
+        initial = (
+            "Iniciando Neural GraphRAG · conectando SSE…"
+            if retrieval_mode == "auto" else "Iniciando GraphRAG · conectando SSE…"
+        )
+        progress = st.status(initial, expanded=False)
 
         def text_deltas():
             pending_parts: list[str] = []
             pending_chars = 0
 
-            for message in client.query_stream(question, int(st.session_state.top_k)):
+            for message in client.query_stream(
+                question, int(st.session_state.top_k),
+                retrieval_mode=retrieval_mode,
+                conversation_payment_id=conversation_payment_id,
+            ):
                 event = message.get("event")
                 data = message.get("data") or {}
 
@@ -805,9 +918,10 @@ def render_streaming_assistant(client: ApiClient, question: str) -> None:
                     if progress is not None:
                         progress.update(label=str(data.get("message", "Procesando…")))
                 elif event == "retrieval":
-                    if progress is not None:
+                    if st.session_state.show_query_progress:
                         retrieval_ms = data.get("retrieval_ms", "—")
-                        progress.write(f"Retrieval híbrido + expansión del grafo: {retrieval_ms} ms")
+                        progress.write(f"Recuperación: {retrieval_ms} ms")
+                        progress.write(graphsage_usage(data.get("trace") or {}))
                 elif event == "delta":
                     delta = str(data.get("delta", ""))
                     if not delta:
@@ -855,7 +969,8 @@ def render_streaming_assistant(client: ApiClient, question: str) -> None:
                 }
             render_assistant_payload(payload)
             add_message("assistant", answer.strip(), payload)
-        except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+        except Exception as exc:
+            LOGGER.exception("Chat generation failed")
             error_message = (
                 "No fue posible completar la consulta GraphRAG por streaming. "
                 "Verifica el estado de `api`, Neo4j y la configuración del proveedor de generación."
@@ -867,6 +982,8 @@ def render_streaming_assistant(client: ApiClient, question: str) -> None:
             add_message("assistant", error_message)
         finally:
             st.session_state.pending_request = None
+            st.session_state.pending_conversation_payment_id = None
+            st.session_state.pending_conversation_id = None
 
     st.rerun()
 
@@ -880,6 +997,10 @@ def render_chat_area(
     render_topbar(conversation, service_ready, readiness)
 
     pending_request = st.session_state.get("pending_request")
+    belongs_here = (
+        bool(pending_request)
+        and st.session_state.get("pending_conversation_id") == conversation["id"]
+    )
     render_scroll_driver(conversation["id"])
     with st.container(border=False, key="chat_scroll_panel"):
         with st.container(border=False, key="chat_thread"):
@@ -887,27 +1008,66 @@ def render_chat_area(
             if messages:
                 for message in messages:
                     render_message(message)
-            elif not pending_request:
+            elif not belongs_here:
                 render_empty_state()
-
-            if pending_request:
-                render_streaming_assistant(client, str(pending_request))
+            # The assistant MUST live inside the scrolling thread. Previously the
+            # first reply was drawn outside the viewport and was invisible while
+            # a slow neural lookup blocked the Streamlit run.
+            assistant_slot = st.empty() if belongs_here else None
         st.html('<div class="chat-bottom-anchor" aria-hidden="true"></div>')
 
-    # Nest chat_input so Streamlit renders it inline in the center column rather
-    # than as a page-level fixed footer. This keeps both sidecards independent.
-    pending_example = st.session_state.pop("pending_question", None)
+    # Draw the composer before blocking on the network, so the busy/disabled
+    # state is immediately visible for both modes and the chat layout is stable.
     with st.container(key="chat_composer"):
+        widget_key = f"chat-input-{conversation['id']}"
         question = st.chat_input(
             "Pregunta sobre rechazos, incidencias o controles de payment processing",
-            disabled=bool(st.session_state.get("pending_request")),
-            key=f"chat-input-{conversation['id']}",
+            disabled=belongs_here,
+            key=widget_key,
+            on_submit=queue_chat_question,
+            args=(widget_key,),
         )
-    return question or pending_example
+
+    if belongs_here and assistant_slot is not None:
+        with assistant_slot.container():
+            render_streaming_assistant(
+                client, str(pending_request),
+                retrieval_mode=st.session_state.pending_retrieval_mode,
+                conversation_payment_id=st.session_state.pending_conversation_payment_id,
+            )
+    # Callback normally captures the question at the start of the run; this
+    # fallback also supports Streamlit releases whose callback semantics differ.
+    return question
+
+
+def start_queued_turn(question: str) -> None:
+    """Commit the user message BEFORE rendering, then stream from its viewport."""
+    if st.session_state.get("pending_request") or not question.strip():
+        return
+    conversation = current_conversation()
+    plan = plan_turn(conversation, question, st.session_state.retrieval_mode)
+    add_message("user", plan["question"])
+    st.session_state.pending_request = plan["question"]
+    st.session_state.pending_conversation_id = conversation["id"]
+    st.session_state.pending_conversation_payment_id = plan["conversation_payment_id"]
+    st.session_state.pending_retrieval_mode = plan["retrieval_mode"]
+    st.session_state.scroll_nonce += 1
+    LOGGER.info(
+        "Dispatching chat question; mode=%s; explicit_payment_count=%s",
+        plan["retrieval_mode"], plan["explicit_payment_count"],
+    )
 
 
 if not st.session_state.conversations:
     new_conversation()
+
+# Widget callbacks execute before the main script. Consume their pending text
+# now: the user message and assistant placeholder must both be rendered within
+# the scrolling chat thread before a potentially slow GraphSAGE/SSE request.
+queued = st.session_state.pop("pending_question", None)
+queued_chat = st.session_state.pop("submitted_chat_question", None)
+if queued or queued_chat:
+    start_queued_turn(str(queued or queued_chat))
 
 client = ApiClient()
 
@@ -947,7 +1107,7 @@ else:
             )
 
 if submitted_question and not st.session_state.get("pending_request"):
-    add_message("user", submitted_question)
-    st.session_state.pending_request = submitted_question
-    st.session_state.scroll_nonce += 1
+    # Fallback for Streamlit versions that expose st.chat_input's return value
+    # without executing on_submit. Re-render before starting network I/O.
+    start_queued_turn(submitted_question)
     st.rerun()

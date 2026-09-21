@@ -1,7 +1,7 @@
 name: axiz-graphrag-payments-poc
 
 x-backend-image: &backend-image
-  image: axiz-graphrag-payments-poc-app:1.5.5
+  image: axiz-graphrag-payments-poc-app:1.7.3
   build:
     context: ..
     dockerfile: infrastructure/app.Dockerfile
@@ -17,6 +17,7 @@ x-backend-environment: &backend-environment
   HYBRID_RANKER: ${HYBRID_RANKER:-linear}
   HYBRID_ALPHA: ${HYBRID_ALPHA:-0.35}
   EFFECTIVE_SEARCH_RATIO: ${EFFECTIVE_SEARCH_RATIO:-3}
+  SYNTHETIC_PAYMENT_COUNT: ${SYNTHETIC_PAYMENT_COUNT:-320}
   HF_HOME: /root/.cache/huggingface
 
 services:
@@ -24,14 +25,18 @@ services:
     image: neo4j:2026.08.1
     environment:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-axiz-graphrag-poc}
-      NEO4J_server_memory_heap_initial__size: 512m
-      NEO4J_server_memory_heap_max__size: 512m
-      NEO4J_server_memory_pagecache_size: 256m
+      NEO4J_PLUGINS: '["graph-data-science"]'
+      NEO4J_dbms_security_procedures_unrestricted: "gds.*"
+      NEO4J_dbms_security_procedures_allowlist: "gds.*"
+      NEO4J_server_memory_heap_initial__size: 1g
+      NEO4J_server_memory_heap_max__size: 1g
+      NEO4J_server_memory_pagecache_size: 512m
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
     volumes:
       - neo4j_data:/data
+      - neo4j_plugins:/plugins
     healthcheck:
       test: ["CMD-SHELL", "cypher-shell -u neo4j -p ${NEO4J_PASSWORD:-axiz-graphrag-poc} 'RETURN 1;' >/dev/null 2>&1"]
       interval: 5s
@@ -61,7 +66,7 @@ services:
     volumes:
       - hf_cache:/root/.cache/huggingface
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       dataset-loader:
         condition: service_completed_successfully
@@ -79,11 +84,12 @@ services:
     environment:
       API_BASE_URL: http://api:8000
     ports:
-      - "8501:8501"
+      - "127.0.0.1:8501:8501"
     depends_on:
       api:
         condition: service_healthy
 
 volumes:
   neo4j_data:
+  neo4j_plugins:
   hf_cache:
