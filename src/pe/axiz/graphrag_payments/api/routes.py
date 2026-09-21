@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterator
 from functools import lru_cache
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from neo4j import Driver
+from neo4j.exceptions import Neo4jError
 
+from pe.axiz.graphrag_payments.application.benchmark import (
+    BenchmarkNotReadyError,
+    BenchmarkService,
+)
 from pe.axiz.graphrag_payments.application.graphsage import (
     GraphSageNotReadyError,
     GraphSagePaymentNotFoundError,
@@ -16,6 +22,7 @@ from pe.axiz.graphrag_payments.application.graphsage import (
 from pe.axiz.graphrag_payments.application.generation import build_generator
 from pe.axiz.graphrag_payments.application.service import GraphRagService
 from pe.axiz.graphrag_payments.domain.models import (
+    BenchmarkResponse,
     GraphRagQueryRequest,
     GraphRagQueryResponse,
     GraphSageSimilarResponse,
@@ -29,6 +36,7 @@ from pe.axiz.graphrag_payments.infrastructure.neo4j import check_connectivity, g
 from pe.axiz.graphrag_payments.settings import get_settings
 
 router = APIRouter()
+LOGGER = logging.getLogger(__name__)
 
 
 @lru_cache
@@ -170,3 +178,26 @@ def graphsage_similar(
         raise HTTPException(status_code=404, detail=f"Pago {payment_id} no encontrado") from exc
     except GraphSageNotReadyError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/api/v1/experiments/graphsage-value", response_model=BenchmarkResponse, tags=["experiments"])
+def graphsage_value_benchmark(
+    top_k: int = Query(default=5, ge=1, le=20),
+    driver: Driver = Depends(get_driver),
+) -> BenchmarkResponse:
+    try:
+        return BenchmarkService(driver, get_settings().neo4j_database).run(top_k=top_k)
+    except BenchmarkNotReadyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Neo4jError as exc:
+        LOGGER.exception("Fallo de Neo4j en el experimento GraphSAGE")
+        raise HTTPException(
+            status_code=503,
+            detail="Falló la evaluación en Neo4j. Revisa los logs de la API.",
+        ) from exc
+    except Exception as exc:
+        LOGGER.exception("Fallo inesperado en el experimento GraphSAGE")
+        raise HTTPException(
+            status_code=500,
+            detail="Error de evaluación. Revisa los logs de la API.",
+        ) from exc

@@ -143,3 +143,48 @@ class SchemaResponse(BaseModel):
     node_labels: list[str]
     relationship_types: list[str]
     indexes: list[str]
+
+
+class BenchmarkCandidate(BaseModel):
+    payment_id: str
+    score: float
+    evidence: list[str] = Field(default_factory=list)
+    relevant_in_synthetic_truth: bool
+
+
+class BenchmarkMetrics(BaseModel):
+    precision_at_k: float
+    recall_at_k: float
+    hit_at_k: float
+    ndcg_at_k: float
+
+
+class BenchmarkQueryResult(BaseModel):
+    anchor: str
+    incident: str
+    relevant_total: int
+    baseline: list[BenchmarkCandidate]
+    graphsage: list[BenchmarkCandidate]
+    additional_relevant_ids: list[str]
+    baseline_metrics: BenchmarkMetrics
+    graphsage_metrics: BenchmarkMetrics
+    union_metrics: BenchmarkMetrics
+
+
+class BenchmarkResponse(BaseModel):
+    case: str
+    synthetic: bool
+    truth_policy: str
+    cohort_payments: int
+    queries: int
+    top_k: int
+    baseline_description: str
+    neural_description: str
+    baseline: BenchmarkMetrics
+    graphsage: BenchmarkMetrics
+    union_at_2k: BenchmarkMetrics
+    additional_relevant_hits: int
+    distinct_additional_relevant: int
+    queries_with_additional_relevant: int
+    results: list[BenchmarkQueryResult]
+    limitations: list[str]

@@ -1,0 +1,74 @@
+{
+  "version": "synthetic-v1",
+  "purpose": "Demostración de recuperación de pagos del mismo incidente simulado, no causa raíz verificada en producción.",
+  "anchors": [
+    "BENCH-001",
+    "BENCH-004",
+    "BENCH-013",
+    "BENCH-016",
+    "BENCH-025",
+    "BENCH-028",
+    "BENCH-037",
+    "BENCH-040"
+  ],
+  "incident_members": {
+    "switch_cascade": [
+      "BENCH-001",
+      "BENCH-002",
+      "BENCH-003",
+      "BENCH-004",
+      "BENCH-005",
+      "BENCH-006",
+      "BENCH-007",
+      "BENCH-008"
+    ],
+    "authentication_disruption": [
+      "BENCH-013",
+      "BENCH-014",
+      "BENCH-015",
+      "BENCH-016",
+      "BENCH-017",
+      "BENCH-018",
+      "BENCH-019",
+      "BENCH-020"
+    ],
+    "capture_delay": [
+      "BENCH-025",
+      "BENCH-026",
+      "BENCH-027",
+      "BENCH-028",
+      "BENCH-029",
+      "BENCH-030",
+      "BENCH-031",
+      "BENCH-032"
+    ],
+    "risk_rule_misconfiguration": [
+      "BENCH-037",
+      "BENCH-038",
+      "BENCH-039",
+      "BENCH-040",
+      "BENCH-041",
+      "BENCH-042",
+      "BENCH-043",
+      "BENCH-044"
+    ]
+  },
+  "hard_negatives": [
+    "BENCH-009",
+    "BENCH-010",
+    "BENCH-011",
+    "BENCH-012",
+    "BENCH-021",
+    "BENCH-022",
+    "BENCH-023",
+    "BENCH-024",
+    "BENCH-033",
+    "BENCH-034",
+    "BENCH-035",
+    "BENCH-036",
+    "BENCH-045",
+    "BENCH-046",
+    "BENCH-047",
+    "BENCH-048"
+  ]
+}

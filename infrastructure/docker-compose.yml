@@ -18,6 +18,7 @@ x-backend-environment: &backend-environment
   HYBRID_ALPHA: ${HYBRID_ALPHA:-0.35}
   EFFECTIVE_SEARCH_RATIO: ${EFFECTIVE_SEARCH_RATIO:-3}
   SYNTHETIC_PAYMENT_COUNT: ${SYNTHETIC_PAYMENT_COUNT:-320}
+  ENABLE_BENCHMARK_DATA: ${ENABLE_BENCHMARK_DATA:-true}
   HF_HOME: /root/.cache/huggingface
 
 services:

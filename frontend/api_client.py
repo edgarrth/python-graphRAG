@@ -122,3 +122,11 @@ class ApiClient:
         )
         response.raise_for_status()
         return response.json()
+
+    def graphsage_value_benchmark(self, top_k: int = 5) -> dict[str, Any]:
+        response = httpx.get(
+            f"{self.base_url}/api/v1/experiments/graphsage-value",
+            params={"top_k": top_k}, timeout=90,
+        )
+        response.raise_for_status()
+        return response.json()

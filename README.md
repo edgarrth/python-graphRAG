@@ -25,6 +25,7 @@ El foco no es construir un procesador de pagos completo. El objetivo es probar, 
 
 ---
 
+
 ## 1. Caso de uso tecnológico
 
 Un RAG vectorial tradicional puede encontrar un texto que explique el código `05`, pero no conoce por sí mismo qué pagos de la muestra están conectados con ese código, en qué comercio ocurrieron o por qué adquirente fueron ruteados.
@@ -84,6 +85,15 @@ Ejemplo de pregunta:
 La PoC recupera el conocimiento que explica el código y expande el grafo hacia los pagos conectados, mostrando comercio, 
 adquirente, monto y estado como evidencia adicional.
 
+## Valor de GraphSAGE
+
+El proyecto incluye un **experimento de recuperación** que compara una línea base de relaciones explícitas y reglas de negocio con la similitud coseno de los **embeddings reales GraphSAGE**. El caso contiene 48 pagos sintéticos `BENCH-`, 8 consultas sobre cuatro incidentes ficticios y 16 pagos de control difíciles. Las etiquetas de incidente están en un JSON separado, no se cargan en Neo4j ni se usan al entrenar o rankear. **La comparación puede concluir que GraphSAGE no aporta hallazgos relevantes nuevos.**
+
+Después de levantar Compose y entrenar GraphSAGE en **GraphSAGE · administración y pruebas**, abre un chat nuevo y pulsa la pregunta de ejemplo **«¿GraphSAGE aporta pagos relevantes? (K=5)»**. La comparación se ejecuta en el propio chat y muestra resultados, detalles expandibles por pago e informe JSON. También puedes escribir `/evaluar graphsage k=10` (K de 1 a 20) o invocar `GET /api/v1/experiments/graphsage-value?top_k=5`. Si no se completó la carga o faltan embeddings, la API responde 409 y el chat muestra cómo proceder. La comparación **no** se envía al LLM ni usa el endpoint de SSE de preguntas normales.
+
+**Alcance:** compara *recuperación de pagos* mediante relaciones/reglas frente a GraphSAGE; **no evalúa el recuperador híbrido de KnowledgeChunk, la generación de respuestas ni datos productivos**. El uso de una cohorte etiquetada sintéticamente y entrenamiento sobre su topología no demuestra generalización en incidentes futuros. Instrucciones, pesos, fórmulas, limitaciones y ejecución: [docs/EXPERIMENTO_VALOR_GRAPHSAGE.md](docs/EXPERIMENTO_VALOR_GRAPHSAGE.md).
+
+---
 ---
 
 ## 3. Arquitectura

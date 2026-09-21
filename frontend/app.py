@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 from collections import OrderedDict
 from datetime import UTC, datetime
 from html import escape
@@ -12,6 +13,10 @@ from uuid import uuid4
 import httpx
 import streamlit as st
 from api_client import ApiClient
+from benchmark_chat import (
+    BENCHMARK_EXAMPLE_QUESTION, additional_payment_rows, benchmark_top_k,
+    query_rows, strategy_rows,
+)
 from chat_flow import plan_turn
 from ui_helpers import EXAMPLE_QUESTIONS, conversation_group, conversation_title, graphsage_usage, trace_rows
 
@@ -49,6 +54,8 @@ for key, default in {
     "retrieval_mode": "Neural GraphRAG inteligente",
     "pending_conversation_payment_id": None,
     "pending_retrieval_mode": "traditional",
+    "pending_turn_kind": "chat",
+    "pending_benchmark_k": None,
     "pending_conversation_id": None,
     "left_sidebar_collapsed": False,
     "scroll_nonce": 0,
@@ -451,8 +458,7 @@ def render_left_navigation(service_ready: bool, readiness: dict[str, Any]) -> No
         st.caption(f"Generación activa: **{runtime}**")
         with st.expander("GraphSAGE · administración y pruebas", expanded=False):
             st.caption(
-                "Panel técnico: entrena el modelo o prueba directamente la similitud entre pagos. "
-                "Para consultar en lenguaje natural, utiliza el chat central: no necesitas ingresar aquí el ID."
+                "Entrena el modelo o busca pagos similares."
             )
             if service_ready:
                 try:
@@ -491,10 +497,8 @@ def render_left_navigation(service_ready: bool, readiness: dict[str, Any]) -> No
                     except httpx.HTTPError as exc:
                         st.error(f"Consulta neuronal fallida: {exc}")
                 st.caption(
-                    "La similitud coseno de GraphSAGE no demuestra una causa raíz compartida. "
-                    "El chat inteligente puede activar GraphSAGE automáticamente al pedir similitud."
+                    "Similitud ≠ causa común."
                 )
-
         if st.button("＋ Nuevo chat", type="primary", width="stretch"):
             new_conversation()
             st.rerun()
@@ -736,6 +740,100 @@ def render_assistant_payload(payload: dict[str, Any]) -> None:
             st.dataframe(payload["neural_neighbors"], hide_index=True, width="stretch")
 
 
+def render_benchmark_report(report: dict[str, Any], report_id: str) -> None:
+    """Render the experiment within the full-width chat message, not the sidebar."""
+    k = int(report["top_k"])
+    st.caption(f"Datos ficticios · {report['cohort_payments']} pagos · {report['queries']} consultas · K={k}")
+    rules_col, sage_col, new_col = st.columns(3)
+    rules_col.metric("Recall reglas", f"{report['baseline']['recall_at_k']:.1%}")
+    sage_col.metric("Recall GraphSAGE", f"{report['graphsage']['recall_at_k']:.1%}")
+    new_col.metric("Hallazgos extra", report["additional_relevant_hits"])
+    st.dataframe(strategy_rows(report), hide_index=True, width="stretch")
+    st.caption("*La unión usa hasta 2K candidatos; no es una comparación con igual presupuesto.")
+    st.caption(
+        f"GraphSAGE aportó relevantes fuera del top-{k} de reglas en "
+        f"{report['queries_with_additional_relevant']}/{report['queries']} consultas "
+        f"({report['distinct_additional_relevant']} pagos distintos)."
+    )
+    extra_rows = additional_payment_rows(report)
+    if extra_rows:
+        with st.expander("Pagos relevantes adicionales · GraphSAGE", expanded=True):
+            st.dataframe(extra_rows, hide_index=True, width="stretch", height=min(38 * len(extra_rows) + 38, 230))
+    else:
+        st.caption("Sin pagos relevantes adicionales en esta comparación.")
+    for item in report["results"]:
+        additional = item["additional_relevant_ids"]
+        with st.expander(f"{item['anchor']} · {item['incident']} · +{len(additional)}", expanded=False):
+            if additional:
+                st.success("Solo GraphSAGE en top-K: " + ", ".join(additional))
+            else:
+                st.caption("Sin relevantes adicionales en top-K.")
+            st.dataframe(query_rows(item), hide_index=True, width="stretch")
+    with st.expander("Alcance y límites", expanded=False):
+        st.caption(
+            "Etiquetas ficticias, ajenas al entrenamiento; solo se compara recuperación de pagos. "
+            "No demuestra causa raíz, fraude ni superioridad sobre datos reales."
+        )
+    st.download_button(
+        "Exportar JSON", data=json.dumps(report, ensure_ascii=False, indent=2),
+        file_name="graphsage_value_benchmark.json", mime="application/json",
+        key=f"benchmark-download-{report_id}",
+    )
+    st.caption("Otro K: escribe /evaluar graphsage k=10 (1–20).")
+
+
+def render_benchmark_assistant(client: ApiClient, top_k: int) -> None:
+    """Run only the actual benchmark endpoint, inside the visible chat thread."""
+    st.html('<div class="stream-active-marker" aria-hidden="true"></div>')
+    with st.chat_message("assistant", avatar=APP_ICON):
+        report: dict[str, Any] | None = None
+        with st.status("Comparando reglas y GraphSAGE…", expanded=False) as progress:
+            try:
+                report = client.graphsage_value_benchmark(top_k)
+            except httpx.HTTPStatusError as exc:
+                try:
+                    detail = exc.response.json().get("detail")
+                except (ValueError, AttributeError, TypeError):
+                    detail = None
+                if exc.response.status_code == 409:
+                    message = f"No se pudo ejecutar la evaluación: {detail or 'Carga los datos BENCH- y entrena GraphSAGE.'}"
+                elif exc.response.status_code >= 500:
+                    message = "La API falló durante la evaluación. Revisa los logs de api."
+                else:
+                    message = f"No se pudo ejecutar la evaluación (HTTP {exc.response.status_code}): {detail or 'Error de la API.'}"
+                progress.update(label="Evaluación no completada", state="error")
+                st.error(message)
+                add_message("assistant", message)
+            except httpx.HTTPError:
+                message = "No se pudo conectar con la API. Verifica los servicios."
+                progress.update(label="Evaluación no completada", state="error")
+                st.error(message)
+                add_message("assistant", message)
+            except Exception:
+                LOGGER.exception("Benchmark chat execution failed")
+                message = "Error al procesar la evaluación. Consulta los logs del frontend."
+                progress.update(label="Evaluación no completada", state="error")
+                st.error(message)
+                add_message("assistant", message)
+            else:
+                progress.update(label="Comparación completada", state="complete")
+            finally:
+                st.session_state.pending_request = None
+                st.session_state.pending_conversation_payment_id = None
+                st.session_state.pending_conversation_id = None
+                st.session_state.pending_benchmark_k = None
+                st.session_state.pending_turn_kind = "chat"
+        # Render outside the collapsed status widget. The full-width chat card
+        # persists as an assistant message, without re-running the API on rerun.
+        if report is not None:
+            report_id = uuid4().hex
+            content = "Resultado de la comparación de pagos (datos ficticios):"
+            st.markdown(content)
+            render_benchmark_report(report, report_id)
+            add_message("assistant", content, {"kind": "benchmark", "report": report, "report_id": report_id})
+    st.rerun()
+
+
 def render_message(message: dict[str, Any]) -> None:
     role = message.get("role", "assistant")
     avatar: Any = APP_ICON if role == "assistant" else None
@@ -743,7 +841,10 @@ def render_message(message: dict[str, Any]) -> None:
         st.markdown(message.get("content", ""))
         payload = message.get("payload")
         if payload:
-            render_assistant_payload(payload)
+            if payload.get("kind") == "benchmark":
+                render_benchmark_report(payload["report"], payload["report_id"])
+            else:
+                render_assistant_payload(payload)
 
 
 def queue_chat_question(widget_key: str) -> None:
@@ -783,7 +884,7 @@ def render_empty_state() -> None:
         st.markdown("<div class='suggestion-label'>Preguntas de ejemplo</div>", unsafe_allow_html=True)
         with st.container(key="example_questions"):
             left_column, right_column = st.columns(2, gap="small")
-            for index, question in enumerate(EXAMPLE_QUESTIONS):
+            for index, question in enumerate((*EXAMPLE_QUESTIONS, BENCHMARK_EXAMPLE_QUESTION)):
                 column = left_column if index % 2 == 0 else right_column
                 with column:
                     st.button(
@@ -1030,11 +1131,14 @@ def render_chat_area(
 
     if belongs_here and assistant_slot is not None:
         with assistant_slot.container():
-            render_streaming_assistant(
-                client, str(pending_request),
-                retrieval_mode=st.session_state.pending_retrieval_mode,
-                conversation_payment_id=st.session_state.pending_conversation_payment_id,
-            )
+            if st.session_state.pending_turn_kind == "benchmark":
+                render_benchmark_assistant(client, int(st.session_state.pending_benchmark_k))
+            else:
+                render_streaming_assistant(
+                    client, str(pending_request),
+                    retrieval_mode=st.session_state.pending_retrieval_mode,
+                    conversation_payment_id=st.session_state.pending_conversation_payment_id,
+                )
     # Callback normally captures the question at the start of the run; this
     # fallback also supports Streamlit releases whose callback semantics differ.
     return question
@@ -1045,6 +1149,19 @@ def start_queued_turn(question: str) -> None:
     if st.session_state.get("pending_request") or not question.strip():
         return
     conversation = current_conversation()
+    benchmark_k = benchmark_top_k(question)
+    if benchmark_k is not None:
+        # Explicit benchmark question: never pass it to the LLM/SSE normal route.
+        add_message("user", question.strip())
+        st.session_state.pending_request = question.strip()
+        st.session_state.pending_conversation_id = conversation["id"]
+        st.session_state.pending_turn_kind = "benchmark"
+        st.session_state.pending_benchmark_k = benchmark_k
+        st.session_state.scroll_nonce += 1
+        LOGGER.info("Dispatching actual GraphSAGE-vs-rules benchmark; top_k=%s", benchmark_k)
+        return
+    st.session_state.pending_turn_kind = "chat"
+    st.session_state.pending_benchmark_k = None
     plan = plan_turn(conversation, question, st.session_state.retrieval_mode)
     add_message("user", plan["question"])
     st.session_state.pending_request = plan["question"]
