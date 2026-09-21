@@ -82,7 +82,7 @@ def test_right_settings_exposes_graph_rag_controls() -> None:
     frontend = Path(__file__).resolve().parents[1] / "frontend"
     app_source = (frontend / "app.py").read_text(encoding="utf-8")
 
-    assert "Top K de recuperación" in app_source
+    assert "Contextos (Top K)" in app_source
     assert "Actividad técnica" in app_source
     assert "Evidencia recuperada" in app_source
     assert "Progreso de consulta" in app_source
@@ -135,7 +135,7 @@ def test_first_stream_hides_stale_empty_state_immediately() -> None:
     # The welcome state is rendered only when there are no messages and no
     # pending request; once streaming starts, the marker also hides any stale
     # DOM from the previous Streamlit run until it is pruned.
-    assert "elif not pending_request:" in app_source
+    assert "elif not belongs_here:" in app_source
 
 
 def test_example_questions_have_dedicated_spacing_container() -> None:

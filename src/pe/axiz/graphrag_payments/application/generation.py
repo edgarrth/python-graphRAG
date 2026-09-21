@@ -103,6 +103,8 @@ class OpenAIGroundedGenerator(AnswerGenerator):
                     "y no lo sustituyas por otro código relacionado. Si la evidencia no alcanza, dilo "
                     "explícitamente. Los vecinos con source=graphsage son únicamente similitud "
                     "estructural neuronal, NO prueban causa común, causalidad, fraude ni riesgo. "
+                    "Si el usuario pide pagos relacionados, diferencia las relaciones directas "
+                    "verificadas del grafo de la similitud estimada por GraphSAGE; no las equipares. "
                     "Indica sus identificadores y scores solo cuando consten en el contexto. "
                     "No inventes causas, métricas ni acciones."
                 ),

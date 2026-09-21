@@ -1,10 +1,19 @@
-# Axiz GraphRAG Payments PoC
+# GraphRAG Payments
 
-Versión de la PoC: **1.7.0** (GraphRAG conversacional con GraphSAGE automático y referencia por conversación).
+PoC técnica en Python para demostrar una arquitectura **GraphRAG (Graph Retrieval-Augmented Generation)** 
+sobre un caso funcional de **payment processing**: investigación de rechazos, timeouts y controles operativos de pagos.
 
-PoC técnica en Python para demostrar una arquitectura **GraphRAG (Graph Retrieval-Augmented Generation)** sobre un caso funcional de **payment processing**: investigación de rechazos, timeouts y controles operativos de pagos.
 
-Además de la recuperación híbrida, esta versión incorpora entrenamiento real de **GraphSAGE en Neo4j GDS**, embeddings de pagos persistidos y recuperación neuronal opcional para GraphRAG.
+```bash
+docker compose --env-file .env -f infrastructure/docker-compose.yml up -d --build --no-deps
+```
+
+Para observar la actividad del chat (sin exponer tu clave OpenAI):
+
+```bash
+# Ejecución continua hasta Ctrl+C.
+docker compose -f infrastructure/docker-compose.yml logs -f frontend api
+```
 
 El foco no es construir un procesador de pagos completo. El objetivo es probar, de extremo a extremo, que una consulta en lenguaje natural puede:
 
@@ -13,8 +22,6 @@ El foco no es construir un procesador de pagos completo. El objetivo es probar, 
 3. usar el resultado como punto de entrada a un **grafo de conocimiento**;
 4. recorrer relaciones para incorporar pagos, códigos de rechazo, comercios y adquirentes conectados;
 5. generar una respuesta sustentada en ese contexto y exponer trazabilidad de lo recuperado.
-
-La PoC usa únicamente la infraestructura necesaria para probar el concepto: **Neo4j**. No agrega PostgreSQL, Redis, Kafka ni un vector database separado porque Neo4j ya cubre grafo, full-text y vector search para este escenario.
 
 ---
 
@@ -50,8 +57,6 @@ La documentación oficial de Neo4j describe `HybridCypherRetriever` precisamente
 | Ejecución sin credenciales externas | `GENERATION_PROVIDER=deterministic` por defecto |
 | Generación con LLM real | Opcional con `GENERATION_PROVIDER=openai` y `OPENAI_API_KEY` |
 
-> La generación determinística es deliberada para que la PoC funcione completamente sin credenciales externas. El retrieval —que es el núcleo del caso de uso GraphRAG— sí utiliza el stack real de Neo4j GraphRAG. Si se configura OpenAI, la capa de generación cambia a un LLM manteniendo exactamente el mismo contexto recuperado.
-
 ---
 
 ## 2. Caso de uso funcional: investigación de payment processing
@@ -76,7 +81,8 @@ Ejemplo de pregunta:
 ¿Por qué se rechazan pagos con código 05 y qué debería revisar operaciones?
 ```
 
-La PoC recupera el conocimiento que explica el código y expande el grafo hacia los pagos conectados, mostrando comercio, adquirente, monto y estado como evidencia adicional.
+La PoC recupera el conocimiento que explica el código y expande el grafo hacia los pagos conectados, mostrando comercio, 
+adquirente, monto y estado como evidencia adicional.
 
 ---
 
@@ -100,14 +106,6 @@ flowchart LR
     EMB --> G
     DATA --> G
 ```
-
-### Por qué no se agregan más componentes
-
-- **No PostgreSQL**: los datos necesarios para la prueba viven naturalmente como nodos/relaciones.
-- **No Redis**: no se prueba caching ni session state distribuido.
-- **No Kafka/RabbitMQ**: el streaming requerido es de respuesta HTTP y se implementa directamente con **SSE**; no existe un caso que justifique un broker.
-- **No Pinecone/Qdrant/Weaviate**: Neo4j ya provee el índice vectorial requerido.
-- **No Flyway**: Flyway está orientado a migraciones SQL. Para Neo4j esta PoC usa DDL Cypher idempotente (`CREATE ... IF NOT EXISTS`) dentro del cargador de datasets, evitando duplicar scripts de inicialización.
 
 ---
 
@@ -141,8 +139,6 @@ flowchart LR
 ├── pyproject.toml
 └── README.md                  # Único documento del proyecto
 ```
-
-El paquete principal cumple el namespace solicitado: **`pe.axiz`**.
 
 ---
 
@@ -178,13 +174,10 @@ Es el único mecanismo de inicialización de datos/esquema. Es idempotente y cre
 - conocimiento operativo con embeddings;
 - pagos y relaciones.
 
-No hay scripts de seed duplicados en `infrastructure/`.
-
 ---
 
 ## 6. Tecnologías y versiones
 
-La PoC apunta a **Python 3.13**. Las dependencias directas se fijan para hacer la ejecución reproducible y fueron seleccionadas sobre versiones estables actuales al 18-09-2026:
 
 | Tecnología | Versión |
 |---|---:|
@@ -203,8 +196,6 @@ La PoC apunta a **Python 3.13**. Las dependencias directas se fijan para hacer l
 | pytest | 9.1.1 |
 | Ruff | 0.16.8 |
 
-`neo4j-graphrag 1.19.0` soporta Python 3.13 y declara `neo4j >=5.28.4,<7`, `pydantic >=2.6.3,<3`, `sentence-transformers >=3,<4` y `openai >=1.51.1,<2`. Por eso se usan `sentence-transformers 3.4.1` y `openai 1.109.1`: son las últimas versiones de sus respectivas ramas que permanecen dentro de los rangos soportados por GraphRAG 1.19.0. No se usan las versiones absolutas más nuevas 6.x/3.x porque romperían la resolución de dependencias.
-
 ---
 
 ## 7. Modelo de grafo
@@ -219,7 +210,8 @@ erDiagram
     KNOWLEDGE_CHUNK }o--o{ REASON_CODE : EXPLAINS
 ```
 
-El índice vectorial y full-text se aplican a `KnowledgeChunk`; la evidencia transaccional se obtiene navegando relaciones, no duplicándola dentro del texto embebido.
+El índice vectorial y full-text se aplican a `KnowledgeChunk`; la evidencia transaccional se obtiene navegando 
+relaciones, no duplicándola dentro del texto embebido.
 
 ---
 
@@ -240,13 +232,6 @@ Swagger/OpenAPI queda disponible en `http://localhost:8000/docs`.
 
 ## 9. Levantar infraestructura y aplicación
 
-### Prerrequisitos
-
-- Docker Desktop / Docker Engine con Docker Compose v2.
-- Aproximadamente 2–3 GB libres para imágenes, dependencias ML CPU y modelo de embeddings.
-- La primera ejecución necesita acceso a Internet para descargar la imagen de Neo4j, dependencias Python y el modelo de Sentence Transformers.
-- Para ejecución local fuera de Docker se recomienda `uv`; Docker Compose no lo requiere.
-
 Desde la raíz del proyecto:
 
 ```bash
@@ -257,31 +242,10 @@ Luego:
 
 ```bash
 docker compose -f infrastructure/docker-compose.yml up --build
-
-docker compose --env-file .env -f infrastructure/docker-compose.yml up --build --no-deps
 ```
 
-La construcción está optimizada para evitar duplicar trabajo pesado:
-
-- `api` y `dataset-loader` usan **la misma imagen backend** (`axiz-graphrag-payments-poc-app:1.5.5`) construida desde `infrastructure/app.Dockerfile`;
-- PyTorch se instala desde el índice oficial **CPU-only**, porque esta PoC no requiere CUDA/GPU;
-- las dependencias se instalan antes de copiar el código de aplicación, por lo que cambios normales en `src/` reutilizan las capas pesadas del build;
-- el modelo de embeddings se almacena en un volumen `hf_cache` compartido entre `dataset-loader` y `api`, evitando descargarlo dos veces;
-- el frontend instala únicamente Streamlit/HTTPX y no arrastra las dependencias de GraphRAG; además sus dependencias se cachean antes de copiar el código de UI.
-- la interfaz adopta la construcción visual del proyecto de referencia suministrado: tema oscuro Axiz, logo e ícono empaquetados y superficie conversacional central inspirada en ChatGPT;
-- el **sidebar izquierdo es propio de la aplicación**, conserva nuevo chat, búsqueda, historial agrupado, selección, renombrado y eliminación de conversaciones y puede colapsarse como en ChatGPT; al ocultarlo desaparece realmente y el chat central gana un ancho moderado; también muestra el estado de API/Neo4j y las capacidades de recuperación activas;
-- el **sidebar derecho** queda reservado para configuración de la PoC: `Top K`, actividad técnica, evidencia recuperada, progreso de consulta y limpieza de la conversación actual;
-- el documento principal se mantiene **sin scroll en desktop**: los sidecards izquierdo/derecho quedan anclados al viewport y solo el historial central de chat tiene scroll; el scroll usa comportamiento nativo (`scroll-behavior: auto`) para evitar sensación de lentitud en mouse/trackpad;
-- el historial central usa **un único viewport propio (`.st-key-chat_scroll_panel`) con `overflow-y:auto`** y altura explícita (`--axiz-chat-h`, con respaldo `calc(100dvh - CHAT_RESERVED_PX)`); los wrappers de Streamlit entre el viewport y el hilo (`chat_thread`) se fuerzan a tamaño de contenido para que el desborde sea siempre scrolleable. Un driver JS (vía `st.html(..., unsafe_allow_javascript=True)` o, si no existe, `st.iframe`) sigue el streaming mientras el usuario está al final, se suelta al primer scroll hacia arriba, se rearma con cada pregunta y ajusta la altura del viewport al composer real; si el JS no pudiera ejecutarse, un ancla CSS (`overflow-anchor`) mantiene el seguimiento una vez que el usuario está al final;
-- `st.chat_input` se renderiza **inline dentro de la columna central**, evitando el footer global de Streamlit que antes podía desplazar o recortar los paneles laterales;
-- al comenzar el primer turno, la superficie de bienvenida se oculta inmediatamente mediante un marcador de streaming; esto evita que “¿Qué quieres investigar sobre tus pagos?” permanezca visible debajo de los primeros deltas mientras Streamlit termina de podar el DOM del render anterior;
-- el frontend consume `/api/v1/graphrag/query/stream` y pinta la respuesta progresivamente; los deltas SSE pequeños se agrupan en lotes cortos antes de renderizarse para reducir repaints y mantener fluido el scroll sin perder la sensación de streaming;
-- el chat mantiene un ancho de lectura contenido (aprox. 940 px con navegación abierta y 1040 px cuando se colapsa), evitando estirar las respuestas por toda la pantalla;
-- el panel izquierdo muestra el **proveedor de generación realmente reportado por `api-1`** (`OpenAI · modelo` o `Deterministic`), evitando confundir la configuración de un contenedor temporal con la del API activo;
-- se mantienen las cuatro preguntas sugeridas en el estado inicial, con separación propia para evitar solapamientos visuales, y el input inferior fijo;
-- el historial de UI permanece deliberadamente en `st.session_state`: no se agrega una base de datos solo para conversaciones porque no es necesaria para demostrar GraphRAG.
-
-En el primer `--build` todavía se descargarán Python, PyTorch CPU, GraphRAG y Sentence Transformers, por lo que puede tardar varios minutos según la conexión. En rebuilds posteriores, Docker reutiliza las capas si `pyproject.toml` no cambió.
+En el primer `--build` todavía se descargarán Python, PyTorch CPU, GraphRAG y Sentence Transformers, por lo que 
+puede tardar varios minutos según la conexión. En rebuilds posteriores, Docker reutiliza las capas si `pyproject.toml` no cambió.
 
 El flujo de arranque es deliberadamente secuencial:
 
@@ -291,7 +255,7 @@ El flujo de arranque es deliberadamente secuencial:
 4. `frontend` inicia cuando la API está saludable.
 
 
-### 9.1 Qué esperar del primer build
+### 9.1 Primer build
 
 La primera ejecución es la más costosa porque debe descargar las imágenes base y las dependencias ML. Para ver el detalle del progreso:
 
@@ -304,8 +268,6 @@ Luego levante los servicios sin reconstruir:
 ```bash
 docker compose -f infrastructure/docker-compose.yml up
 ```
-
-Para comprobar que Docker está reutilizando caché en una reconstrucción, las etapas de instalación de PyTorch/dependencias deberían aparecer como `CACHED` mientras `pyproject.toml` permanezca sin cambios.
 
 Servicios:
 
@@ -574,10 +536,6 @@ docker compose -f infrastructure/docker-compose.yml exec api \
   python -c "import os; print(os.getenv('GENERATION_PROVIDER')); print(os.getenv('OPENAI_MODEL')); print(bool(os.getenv('OPENAI_API_KEY')))"
 ```
 
-También puede consultar `/health/ready`; la UI muestra el mismo proveedor y modelo reportados por ese endpoint. No use el resultado de `docker compose run --rm api ...` como prueba del estado de `api-1`: ese comando crea un contenedor temporal con la configuración actual.
-
-La etapa de retrieval no cambia: el LLM recibe únicamente el contexto GraphRAG ya recuperado.
-
 ---
 
 ## 14. Calidad de código y pruebas
@@ -612,69 +570,9 @@ Build del paquete:
 uv build
 ```
 
-Estas verificaciones están pensadas para ejecutarse antes de modificar o integrar la PoC en un IDE.
-
 ---
 
-## 15. Validación realizada antes del empaquetado
-
-El entregable fue validado con Python 3.13 antes de generar el ZIP:
-
-- compilación sintáctica de `src`, `frontend`, `datasets` y `tests`: **OK**;
-- suite unitaria: **19/19 tests OK**;
-- parsing de los JSON de datasets y ejemplos request/response: **OK**;
-- parsing del `docker-compose.yml`: **OK**;
-- consistencia referencial del dataset de ejemplo: **OK**;
-- versiones directas de dependencias contrastadas con sus metadatos oficiales y con los rangos de compatibilidad de `neo4j-graphrag`;
-- backend Docker consolidado para `api` + `dataset-loader`, con PyTorch CPU-only y capas reutilizables: **OK**.
-
-El entorno utilizado para empaquetar no dispone de un daemon Docker, por lo que la ejecución end-to-end de los contenedores no pudo realizarse aquí. El `docker compose` queda preparado para realizar esa validación en cualquier equipo con Docker Engine/Desktop y acceso a Internet para la descarga inicial de imágenes y del modelo de embeddings.
-
----
-
-## 16. Decisiones de diseño relevantes para una evolución productiva
-
-Esta PoC aplica buenas prácticas pero no intenta disfrazarse de producto terminado. Para producción normalmente se agregarían, solo si el caso real lo requiere:
-
-- autenticación/autorización;
-- observabilidad centralizada;
-- gestión de secretos;
-- evaluación offline de retrieval y generación;
-- controles de PII/PCI y tokenización;
-- rate limiting;
-- CI/CD;
-- pruebas de carga;
-- ingestión incremental/CDC;
-- políticas de retención y versionado del conocimiento.
-
-No se incluyen aquí porque no son necesarias para validar el concepto técnico GraphRAG.
-
----
-
-## 17. Qué demuestra la PoC
-
-La validación principal no es que un chatbot responda una pregunta, sino que el servicio pueda **usar una búsqueda semántica/lexical para localizar conocimiento y luego explotar las relaciones del grafo para obtener evidencia conectada que un RAG plano no tiene**.
-
-Ese patrón es especialmente útil en payment processing porque las explicaciones operativas suelen estar conectadas con múltiples dimensiones: códigos de rechazo, adquirentes, comercios, medios de pago, intentos, timeouts y controles como idempotencia.
-
-
----
-
-## 18. Referencias técnicas oficiales
-
-- Neo4j GraphRAG for Python: https://neo4j.com/docs/neo4j-graphrag-python/current/
-- Streamlit `st.iframe`: https://docs.streamlit.io/develop/api-reference/text/st.iframe
-- Streamlit `st.write_stream`: https://docs.streamlit.io/develop/api-reference/write-magic/st.write_stream
-- OpenAI Python streaming: https://github.com/openai/openai-python#streaming-responses
-- Guía RAG y retrievers de Neo4j: https://neo4j.com/docs/neo4j-graphrag-python/current/user_guide_rag.html
-- Neo4j Docker: https://neo4j.com/docs/operations-manual/current/docker/introduction/
-- Paquete neo4j-graphrag 1.19.0: https://pypi.org/project/neo4j-graphrag/
-- Sentence Transformers: https://pypi.org/project/sentence-transformers/
-
-
----
-
-## 13. GraphSAGE: entrenamiento real y consultas neuronales (v1.6.0)
+## 13. GraphSAGE: entrenamiento real y consultas neuronales
 
 GraphSAGE aprende embeddings de nodos mediante agregación de vecinos en un grafo proyectado de
 `Payment`, `Merchant`, `Acquirer` y `ReasonCode`. Los tipos de relaciones proyectados se tratan
@@ -711,7 +609,7 @@ curl -s -X POST http://localhost:8000/api/v1/graphrag/query \
   --data @infrastructure/requests/06-graphrag-neural.json
 ```
 
-También puedes abrir `http://localhost:8501`, expandir **GraphSAGE · pagos similares** en la
+También se abrir `http://localhost:8501`, expandir **GraphSAGE · pagos similares** en la
 barra lateral, entrenar y consultar un pago. El chat habitual permanece sin cambios; el modo
 Neural GraphRAG se habilita expresamente enviando `neural_payment_id` en la petición REST o SSE.
 La respuesta muestra vecinos y similitud coseno en `neural_neighbors`, un contexto con
@@ -739,97 +637,6 @@ repositorios de plugins y al modelo de embeddings de Sentence Transformers; el v
 `neo4j_plugins` conserva el JAR descargado. El endpoint de entrenamiento no tiene autenticación:
 **utiliza la PoC únicamente en un entorno local de desarrollo**; añade autorización si la expones.
 
-Documentación oficial: [GraphSAGE](https://neo4j.com/docs/graph-data-science/current/machine-learning/node-embeddings/graph-sage/),
-[GDS en Docker](https://neo4j.com/docs/graph-data-science/current/installation/installation-docker/).
-
-
-## Historial v1.6.1: selector del chat y corrección de import (flujo antiguo)
-
-La versión conserva el flujo GraphRAG original, los endpoints existentes y la consulta
-GraphSAGE independiente de la barra lateral. Se corrige el import de
-`Neo4jError` desde `neo4j.exceptions` (en el driver Neo4j 6.3.1, importar
-`Neo4jError` directamente desde `neo4j` podía impedir el arranque de FastAPI).
-
-En **Configuración → Modo de recuperación del chat**:
-
-- **GraphRAG tradicional** (predeterminado): vector + full-text + expansión del grafo;
-  no necesita entrenamiento neuronal y conserva el payload original.
-- **Neural GraphRAG combinado**: ingresa un ID de pago real (ej. `PAY-1007`);
-  al consultar se verifica que los embeddings estén listos y el chat envía
-  `neural_payment_id` a la misma API SSE. La respuesta y el panel de evidencia
-  incluyen contexto original y vecinos estructurales. La similitud no demuestra causalidad.
-
-**GraphSAGE independiente** sigue disponible en el desplegable izquierdo para
-entrenar el modelo y buscar pagos similares sin realizar preguntas al chat.
-El modo combinado NO entrena automáticamente: entrena primero desde ese desplegable.
-
-### Actualizar sin eliminar datos
-
-Desde la raíz del proyecto, una vez reemplazados los archivos con esta versión:
-
-```bash
-docker compose -f infrastructure/docker-compose.yml up -d --build
-```
-
-`dataset-loader` puede finalizar con código `0` al completar su carga; eso es normal.
-No utilices `docker compose down -v` si quieres conservar el volumen de Neo4j.
-El cambio de selector/import no necesita borrar ni reinicializar la base de datos.
-
-Verifica el arranque con:
-
-```bash
-docker compose -f infrastructure/docker-compose.yml ps
-docker compose -f infrastructure/docker-compose.yml logs --tail=80 api
-```
-
-Los tests de Python comprueban el import y la construcción del payload opcional,
-pero el entrenamiento con Neo4j GDS debe validarse con Docker ejecutándose.
-
-### Historial: corrección del chat frontend (v1.6.2)
-
-The Streamlit chat now captures example-button and chat-submit events in widget callbacks, dispatches the query in the same Streamlit run and logs a dispatch event to the frontend container. The original GraphRAG mode remains the default; the optional combined mode continues to use the selected GraphSAGE payment ID. Existing Neo4j data and GraphSAGE embeddings do not need to be reset or retrained. Rebuild the **frontend** image to apply the update:
-
-```bash
-docker compose --env-file .env -f infrastructure/docker-compose.yml up -d --build --no-deps frontend
-```
-
-To verify submission and detect any stream errors:
-
-```bash
-docker compose -f infrastructure/docker-compose.yml logs -f frontend api
-```
-
-If the chat still fails, check the frontend logs for `Chat question submitted`, `Dispatching chat question`, or `Chat generation failed` (do not share API keys).
-
-
-## Actualización v1.7.0: Neural GraphRAG conversacional (versión actual)
-
-La interfaz **ya no solicita un ID fijo en Configuración**. Se conservan las dos
-modalidades, ahora con **Neural GraphRAG inteligente** seleccionada por defecto:
-
-- **Inteligente:** preguntas generales y preguntas sobre un pago se resuelven con el
-  GraphRAG híbrido original. GraphSAGE solo se consulta cuando el usuario pide
-  explícitamente pagos *similares / parecidos / vecinos* y se dispone de un **único**
-  pago de referencia. El ID se detecta en la pregunta (por ejemplo, `PAY-1008`).
-- **Seguimiento:** después de mencionar `PAY-1008` en una pregunta, puedes escribir
-  «¿Y otros pagos similares?» en **la misma conversación**, sin volver a escribir
-  el ID. Un chat nuevo o «Limpiar conversación» no reutiliza la referencia anterior.
-- **Tradicional:** nunca llama al flujo neuronal de forma automática; conserva la
-  recuperación vectorial, full-text, expansión del grafo y streaming SSE previos.
-  La opción `neural_payment_id` de la API sigue admitida para clientes antiguos.
-- **Sin referencia / referencias ambiguas:** el agente pide un pago de referencia
-  en lugar de inventar uno. «Compara PAY-1008 y PAY-1010» se mantiene como una
-  consulta tradicional; para una búsqueda neuronal entre varios pagos se debe
-  escoger un ID por consulta.
-- **Modelo no entrenado o pago sin embedding:** las preguntas generales siguen
-  funcionando; si se solicita similitud se emplea la recuperación tradicional
-  y se indica en la trazabilidad que GraphSAGE no estuvo disponible.
-
-El **panel izquierdo** sigue siendo una herramienta técnica independiente para
-entrenar GraphSAGE, consultar el estado y probar vecinos mediante un ID. El
-**panel derecho** solo selecciona el modo; el **chat central** es el punto de
-entrada conversacional. La similitud neuronal no demuestra una causa común.
-
 ### Ejemplos en el chat
 
 1. «¿Qué ocurrió con PAY-1008?» → GraphRAG tradicional; registra la referencia
@@ -837,55 +644,3 @@ entrada conversacional. La similitud neuronal no demuestra una causa común.
 2. «¿Y otros pagos parecidos?» → GraphRAG + GraphSAGE para `PAY-1008`.
 3. «¿Qué significa el código 91?» → GraphRAG tradicional, sin consulta neuronal.
 4. «Busca pagos similares a PAY-1007» → GraphRAG + GraphSAGE para `PAY-1007`.
-
-### API REST y SSE
-
-Las rutas anteriores permanecen disponibles. Los campos **opcionales** nuevos
-son `retrieval_mode: "auto"` y `conversation_payment_id`. El valor por defecto
-para **clientes API existentes** sigue siendo `"traditional"` y el campo
-`neural_payment_id` continúa siendo compatible.
-
-```json
-{
-  "question": "¿Y otros pagos similares?",
-  "top_k": 4,
-  "include_context": true,
-  "retrieval_mode": "auto",
-  "conversation_payment_id": "PAY-1008"
-}
-```
-
-La respuesta y el evento SSE `complete` contienen `trace.neural_route`,
-`trace.neural_payment_id`, `trace.neural_matches` y `trace.neural_note` para
-indicar cuándo se activó GraphSAGE. La referencia conversacional se mantiene
-en la sesión de Streamlit, no en una base de datos ni en el estado global de la
-API. Si otro cliente API usa el modo automático, debe transmitir él mismo el ID
-previo al realizar un seguimiento.
-
-### Actualizar sin perder los embeddings de Neo4j
-
-1. Guarda tu `.env` local y cualquier modificación propia antes de sustituir
-   el código. No sustituyas tu archivo `.env` por `.env.example`.
-2. Descomprime el ZIP sobre tu repositorio existente, conservando el volumen
-   de datos de Docker. No uses `docker compose down -v`.
-3. Con `neo4j` y `dataset-loader` ya inicializados en tu entorno, reconstruye
-   **API y frontend** (ambos cambiaron en v1.7.0). `--no-deps` evita que Compose
-   vuelva a ejecutar el loader durante esta actualización de código:
-
-```bash
-docker compose --env-file .env -f infrastructure/docker-compose.yml up -d --build --no-deps api frontend
-```
-
-El tiempo depende de los paquetes y capas Docker en caché; normalmente de
-1 a 5 minutos, pero la primera compilación puede tomar más tiempo.
-No es necesario volver a entrenar GraphSAGE si ya hay embeddings persistidos
-para todos los pagos. Para validar el estado y seguir el procesamiento:
-
-```bash
-docker compose -f infrastructure/docker-compose.yml ps
-docker compose -f infrastructure/docker-compose.yml logs --tail=100 api frontend
-```
-
-**Limitación de validación:** los tests automatizados validan el enrutamiento,
-el payload y el streaming con dependencias simuladas. La ejecución real en
-navegador + Neo4j GDS debe verificarse al levantar Docker en tu equipo.

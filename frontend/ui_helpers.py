@@ -57,3 +57,22 @@ def trace_rows(trace: dict[str, Any] | None) -> list[tuple[str, str]]:
         ("Códigos anclados", ", ".join(trace.get("explicit_reason_codes") or []) or "—"),
         ("Contextos retornados", str(trace.get("returned_contexts", 0))),
     ]
+
+
+def graphsage_usage(trace: dict[str, Any] | None) -> str:
+    """Always-visible, truthful summary of actual neural execution."""
+    trace = trace or {}
+    route = trace.get("neural_route", "traditional")
+    note = str(trace.get("neural_note") or "").strip()
+    if route == "neural":
+        payment_id = str(trace.get("neural_payment_id") or "—")
+        matches = int(trace.get("neural_matches") or 0)
+        return (
+            f"GraphSAGE: Sí · Referencia {payment_id} · {matches} pagos similares. "
+            "La similitud estructural no demuestra causalidad."
+        )
+    if route == "unavailable":
+        return f"GraphSAGE: No · {note or 'Modelo no disponible; se utilizó GraphRAG tradicional.'}"
+    if route in ("needs_reference", "multiple_references"):
+        return f"GraphSAGE: No · {note or 'Se requiere aclarar el pago de referencia.'}"
+    return f"GraphSAGE: No · {note or 'Se utilizó únicamente GraphRAG tradicional.'}"

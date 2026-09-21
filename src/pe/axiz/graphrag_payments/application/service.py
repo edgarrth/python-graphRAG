@@ -199,7 +199,14 @@ class GraphRagService:
         top_k = self._resolve_top_k(request)
         yield {
             "event": "stage",
-            "data": {"stage": "retrieval", "message": "Recuperando contexto GraphRAG…"},
+            "data": {
+                "stage": "retrieval",
+                "message": (
+                    f"Recuperando GraphRAG y similitud GraphSAGE para {route.payment_id}…"
+                    if route.action == "neural"
+                    else "Recuperando contexto GraphRAG · GraphSAGE no requerido…"
+                ),
+            },
         }
 
         retrieval_started = perf_counter()
